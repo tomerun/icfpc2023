@@ -1,0 +1,13 @@
+name: solver
+version: 0.1.0
+
+authors:
+  - tomerun <tomerunmail@gmail.com>
+
+targets:
+  solver:
+    main: src/solver.cr
+
+crystal: 1.7.2
+
+license: MIT

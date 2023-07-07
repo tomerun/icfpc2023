@@ -5,6 +5,7 @@ docs/
 lib/
 output/
 problem/
+answer/
 *.dwarf
 *.png
 *.zip
