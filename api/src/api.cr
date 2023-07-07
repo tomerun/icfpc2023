@@ -8,11 +8,14 @@ enum SubCommand
   Nop
   Problems
   Submit
+  View
 end
 
 cmd = SubCommand::Nop
 min_id = 0
 max_id = 0
+limit = 0
+offset = 1
 dir = ""
 parser = OptionParser.new do |parser|
   parser.on("problem", "get problems") do
@@ -24,10 +27,15 @@ parser = OptionParser.new do |parser|
   end
   parser.on("submit", "make submissions") do
     cmd = SubCommand::Submit
-    dir = "../solution"
+    dir = "../answer"
     parser.on("-b NUM", "start problem ID") { |v| min_id = v.to_i }
     parser.on("-e NUM", "end problem ID") { |v| max_id = v.to_i }
     parser.on("--dir DIR", "solution file directory") { |v| dir = v }
+  end
+  parser.on("view", "view submissions") do
+    cmd = SubCommand::View
+    parser.on("--limit NUM", "limit count") { |v| limit = v.to_i }
+    parser.on("--offset NUM", "offset num") { |v| offset = v.to_i }
   end
 end
 
@@ -38,6 +46,8 @@ when SubCommand::Problems
   problems(min_id, max_id, dir)
 when SubCommand::Submit
   submit(min_id, max_id, dir)
+when SubCommand::View
+  view(limit, offset)
 else
   puts parser
 end
@@ -62,4 +72,12 @@ def submit(min_id, max_id, dir)
     res = client.post("/submission", headers: header, body: body.to_json)
     puts "prob_id:#{prob_id} submission_id:#{res.body}"
   end
+end
+
+def view(limit, offset)
+  client = HTTP::Client.new(ENDPOINT, tls: true)
+  header = HTTP::Headers{"Authorization" => "Bearer #{TOKEN}"}
+  res = client.get("/submissions?offset=#{offset}&limit=#{limit}", headers: header)
+  json = JSON.parse(res.body)
+  puts json
 end
