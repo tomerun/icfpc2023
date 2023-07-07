@@ -1,7 +1,7 @@
 require "json"
 
 START_TIME     = Time.utc.to_unix_ms
-TL             = (ENV["TL"]? || 900).to_i
+TL             = (ENV["TL"]? || 2000).to_i
 PART           = (ENV["PART"]? || 1).to_i
 INITIAL_COOLER = (ENV["IC"]? || 3).to_f * 0.0001
 FINAL_COOLER   = (ENV["FC"]? || 100).to_f * 0.0001
@@ -83,13 +83,17 @@ end
 
 def shuffle(a)
   (a.size - 1).times do |i|
-    pos = RND.next_int(a.size - i) + i
+    pos = RND.rand(a.size - i) + i
     a[i], a[pos] = a[pos], a[i]
   end
 end
 
 def dist2(y0, x0, y1, x1)
   return (y0 - y1) ** 2 + (x0 - x1) ** 2
+end
+
+def dist2(p0, p1)
+  return (p0.y - p1.y) ** 2 + (p0.x - p1.x) ** 2
 end
 
 #####################
@@ -100,7 +104,7 @@ record Pos, y : Float64, x : Float64
 
 record Rect, bottom : Float64, left : Float64, top : Float64, right : Float64
 
-record Attendee, y : Float64, x : Float64, taste : Array(Float64)
+record Attendee, pos : Pos, taste : Array(Float64)
 
 class Result
   getter :score
@@ -138,7 +142,7 @@ class Solver
       x = h["x"].as_f
       y = h["y"].as_f
       taste = h["tastes"].as_a.map { |v| v.as_f }
-      Attendee.new(y, x, taste)
+      Attendee.new(Pos.new(y, x), taste)
     end
   end
 
@@ -149,14 +153,63 @@ class Solver
     step_y = 10 * (3 ** 0.5) + eps
     x = @stage.left
     while y <= @stage.top
+      if y > @stage.top - step_y
+        y = @stage.top
+      end
       x.step(to: @stage.right, by: 20.0) do |cx|
         cand_pos << Pos.new(y, cx)
       end
       x += x == @stage.left ? 5 : -5
       y += step_y
     end
-    STDERR.puts cand_pos.size
-    return Result.new(cand_pos[...@instruments.size], 0.0)
+
+    best_res = RES_EMPTY
+    max_trial = 500
+    turn = 0
+    pos_i = cand_pos.size.times.to_a
+    while true
+      turn += 1
+      if Time.utc.to_unix_ms > timelimit
+        debug("turn:#{turn}")
+        break
+      end
+      used_pos_i = [] of Int32
+      order = @instruments.size.times.to_a
+      shuffle(order)
+      all_sum = 0.0
+      order.each do |pi|
+        if pos_i.size > max_trial
+          max_trial.times do |i|
+            chi = RND.rand(pos_i.size - i) + i
+            pos_i.swap(i, chi)
+          end
+        end
+        inst = @instruments[pi]
+        best_i = -1
+        best_v = -1e10
+        {pos_i.size, max_trial}.min.times do |i|
+          pos = cand_pos[pos_i[i]]
+          sum = 0.0
+          @attendees.size.times do |ai|
+            d2 = dist2(pos, @attendees[ai].pos)
+            v = @attendees[ai].taste[inst]
+            sum += v / d2
+          end
+          if sum > best_v
+            best_v = sum
+            best_i = i
+          end
+        end
+        pos_i.swap(best_i, -1)
+        used_pos_i << pos_i.pop
+        all_sum += best_v
+      end
+      if all_sum > best_res.score
+        debug("score:#{all_sum} at turn:#{turn} ")
+        best_res = Result.new(used_pos_i.map { |i| cand_pos[i] }, all_sum)
+      end
+      pos_i += used_pos_i
+    end
 
     # best_res = solve_one(RES_EMPTY)
     # cur_res = best_res
@@ -194,8 +247,7 @@ class Solver
     #   end
     #   turn += 1
     # end
-    # verify(best_res.rects)
-    # return best_res
+    return best_res
   end
 
   def accept(diff, cooler)
