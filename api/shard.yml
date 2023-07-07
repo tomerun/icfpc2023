@@ -1,0 +1,13 @@
+name: api
+version: 0.1.0
+
+authors:
+  - tomerun <tomerunmail@gmail.com>
+
+targets:
+  api:
+    main: src/api.cr
+
+crystal: 1.7.2
+
+license: MIT

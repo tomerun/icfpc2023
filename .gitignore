@@ -1,0 +1,11 @@
+.shards/
+bin/
+doc/
+docs/
+lib/
+output/
+problem/
+*.dwarf
+*.png
+*.zip
+log.txt
