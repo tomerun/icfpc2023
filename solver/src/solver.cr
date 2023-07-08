@@ -155,34 +155,25 @@ def touch_points(p0, p1, r)
   my = p1.y - p0.y
   mx = p1.x - p0.x
   dist2 = my ** 2 + mx ** 2
-  div = 1.0 / dist2
-  b2ac = {(r2 * my) ** 2 - (r2 ** 2 - r2 * (mx ** 2)) * dist2, 0.0}.max ** 0.5
-  ret = [] of Pos
-  if mx == 0
-    dy = (-r2 * my) * div
-    ty = p1.y + dy - p0.y
-    dx_b = (r2 - dy ** 2) ** 0.5
-    {-1, 1}.each do |sign|
-      dx = dx_b * sign
-      ret << Pos.new(p1.y + dy, p1.x + dx)
-    end
-  else
-    {-1, 1}.each do |sign|
-      dy = (-r2 * my + b2ac * sign) * div
-      dx = (r2 - dy ** 2) ** 0.5
-      ty = p1.y + dy - p0.y
-      tx = p1.x + dx - p0.x
-      if (ty * dy + tx * dx).abs > 1e-5
-        dx *= -1
-      end
-      ret << Pos.new(p1.y + dy, p1.x + dx)
-    end
+  dist = dist2 ** 0.5
+  len_side2 = dist2 - r * r
+  len_side = len_side2 ** 0.5
+  cos = len_side / dist
+  len_m = len_side * cos
+  ratio = len_m / dist
+  ey = my * ratio
+  ex = mx * ratio
+  len_vert = (len_side2 - len_m ** 2) ** 0.5
+  ratio_vert = len_vert / len_m
+  return [-1, 1].map do |sign|
+    ty = ex * ratio_vert * sign
+    tx = -ey * ratio_vert * sign
+    ny = p0.y + ey + ty
+    nx = p0.x + ex + tx
+    dot = (ny - p0.y) * (ny - p1.y) + (nx - p0.x) * (nx - p1.x)
+    assert(dot.abs < 1e-7, dot)
+    Pos.new(ny, nx)
   end
-  assert(ret.size == 2, ret.size)
-  ret.each do |p|
-    assert(((p.y - p0.y) * (p.y - p1.y) + (p.x - p0.x) * (p.x - p1.x)).abs < 1e-5, [p0, p1, r, (p.y - p0.y) * (p.y - p1.y) + (p.x - p0.x) * (p.x - p1.x)])
-  end
-  return ret
 end
 
 class Solver
@@ -246,81 +237,80 @@ class Solver
       end
       mps = best_res.ps.dup
       turn += 1
-      exit
     end
 
-    change_types = [] of ChangeType
-    # 10.times { change_types << ChangeType::MOVE }
-    # 10.times { change_types << ChangeType::JUMP }
-    if @in != 1
-      10.times { change_types << ChangeType::SWAP }
-    end
-    turn = 0
-    cooler = INITIAL_COOLER
-    begin_time = Time.utc.to_unix_ms
-    total_time = timelimit - begin_time
-    while true
-      break
-      if (turn & 0xF) == 0
-        cur_time = Time.utc.to_unix_ms
-        if cur_time >= timelimit
-          debug("total_turn: #{turn}")
-          break
-        end
-        ratio = (cur_time - begin_time) / total_time
-        cooler = Math.exp(Math.log(INITIAL_COOLER) * (1.0 - ratio) + Math.log(FINAL_COOLER) * ratio)
-      end
-      turn += 1
-      change_type = change_types[RND.rand(change_types.size)]
-      case change_type
-      when ChangeType::SWAP
-        i0 = RND.rand(@in)
-        i1 = RND.rand(@in - 1)
-        i1 += 1 if i1 >= i0
-        mi0 = @inst_mi[i0][RND.rand(@inst_mi[i0].size)]
-        mi1 = @inst_mi[i1][RND.rand(@inst_mi[i1].size)]
-        diff = 0.0
-        diff -= @raw_score[mi0] * @quality[mi0]
-        diff -= @raw_score[mi1] * @quality[mi1]
-        new_q0 = 1.0
-        new_q1 = 1.0
-        if !@pillars.empty?
-          @inst_mi[i0].each do |mi|
-            next if mi == mi0
-            v = 1.0 / (dist2(mps[mi], mps[mi1]) ** 0.5)
-            new_q0 += v
-            v_old = 1.0 / dist2(mps[mi], mps[mi0]) ** 0.5
-            diff += (v - v_old) * @raw_score[mi]
-          end
-          @inst_mi[i1].each do |mi|
-            next if mi == mi1
-            v = 1.0 / (dist2(mps[mi], mps[mi0]) ** 0.5)
-            new_q1 += v
-            v_old = 1.0 / dist2(mps[mi], mps[mi1]) ** 0.5
-            diff += (v - v_old) * @raw_score[mi]
-          end
-        end
-        new_raw0 = 0.0
-        new_raw1 = 0.0
-        @an.size.times do |ai|
-          ap = @attendees[ai].pos
-          if @blocked_by[mi0][ai] == EMPTY
-            d2 = dist2(mps[mi0], ap)
-            new_raw0 += @attendees[ai].taste[i1] / d2
-          end
-          if @blocked_by[mi1][ai] == EMPTY
-            d2 = dist2(mps[mi1], ap)
-            new_raw1 += @attendees[ai].taste[i0] / d2
-          end
-        end
-        diff += new_raw0 * new_q1
-        diff += new_raw1 * new_q0
-        if accept(diff, cooler)
-        end
-      when ChangeType::MOVE
-      when ChangeType::JUMP
-      end
-    end
+    # change_types = [] of ChangeType
+    # # 10.times { change_types << ChangeType::MOVE }
+    # # 10.times { change_types << ChangeType::JUMP }
+    # if @in != 1
+    #   10.times { change_types << ChangeType::SWAP }
+    # end
+    # turn = 0
+    # cooler = INITIAL_COOLER
+    # begin_time = Time.utc.to_unix_ms
+    # total_time = timelimit - begin_time
+    # while true
+    #   break
+    #   if (turn & 0xF) == 0
+    #     cur_time = Time.utc.to_unix_ms
+    #     if cur_time >= timelimit
+    #       debug("total_turn: #{turn}")
+    #       break
+    #     end
+    #     ratio = (cur_time - begin_time) / total_time
+    #     cooler = Math.exp(Math.log(INITIAL_COOLER) * (1.0 - ratio) + Math.log(FINAL_COOLER) * ratio)
+    #   end
+    #   turn += 1
+    #   change_type = change_types[RND.rand(change_types.size)]
+    #   case change_type
+    #   when ChangeType::SWAP
+    #     i0 = RND.rand(@in)
+    #     i1 = RND.rand(@in - 1)
+    #     i1 += 1 if i1 >= i0
+    #     mi0 = @inst_mi[i0][RND.rand(@inst_mi[i0].size)]
+    #     mi1 = @inst_mi[i1][RND.rand(@inst_mi[i1].size)]
+    #     diff = 0.0
+    #     diff -= @raw_score[mi0] * @quality[mi0]
+    #     diff -= @raw_score[mi1] * @quality[mi1]
+    #     new_q0 = 1.0
+    #     new_q1 = 1.0
+    #     if !@pillars.empty?
+    #       @inst_mi[i0].each do |mi|
+    #         next if mi == mi0
+    #         v = 1.0 / (dist2(mps[mi], mps[mi1]) ** 0.5)
+    #         new_q0 += v
+    #         v_old = 1.0 / dist2(mps[mi], mps[mi0]) ** 0.5
+    #         diff += (v - v_old) * @raw_score[mi]
+    #       end
+    #       @inst_mi[i1].each do |mi|
+    #         next if mi == mi1
+    #         v = 1.0 / (dist2(mps[mi], mps[mi0]) ** 0.5)
+    #         new_q1 += v
+    #         v_old = 1.0 / dist2(mps[mi], mps[mi1]) ** 0.5
+    #         diff += (v - v_old) * @raw_score[mi]
+    #       end
+    #     end
+    #     new_raw0 = 0.0
+    #     new_raw1 = 0.0
+    #     @an.size.times do |ai|
+    #       ap = @attendees[ai].pos
+    #       if @blocked_by[mi0][ai] == EMPTY
+    #         d2 = dist2(mps[mi0], ap)
+    #         new_raw0 += @attendees[ai].taste[i1] / d2
+    #       end
+    #       if @blocked_by[mi1][ai] == EMPTY
+    #         d2 = dist2(mps[mi1], ap)
+    #         new_raw1 += @attendees[ai].taste[i0] / d2
+    #       end
+    #     end
+    #     diff += new_raw0 * new_q1
+    #     diff += new_raw1 * new_q0
+    #     if accept(diff, cooler)
+    #     end
+    #   when ChangeType::MOVE
+    #   when ChangeType::JUMP
+    #   end
+    # end
     return best_res
   end
 
@@ -579,11 +569,13 @@ class Solver
 
   def verify_score(mps)
     qual = Array.new(@mn, 1.0)
-    @mn.times do |i|
-      @mn.times do |j|
-        next if j == i || @instruments[i] != @instruments[j]
-        d = dist2(mps[i], mps[j]) ** 0.5
-        qual[i] += 1.0 / d
+    if !@pillars.empty?
+      @mn.times do |i|
+        @mn.times do |j|
+          next if j == i || @instruments[i] != @instruments[j]
+          d = dist2(mps[i], mps[j]) ** 0.5
+          qual[i] += 1.0 / d
+        end
       end
     end
     sum = 0.0
