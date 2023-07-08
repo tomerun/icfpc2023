@@ -106,6 +106,11 @@ record Rect, bottom : Float64, left : Float64, top : Float64, right : Float64
 
 record Attendee, pos : Pos, taste : Array(Float64)
 
+enum SortType
+  M
+  A
+end
+
 class Result
   getter :score
 
@@ -206,11 +211,9 @@ class Solver
           pos = cand_pos[pos_i[i]]
           sum = 0.0
           @an.times do |ai|
-            # if used_pos_i.all? { |upi| !block(pos, cand_pos[upi], @attendees[ai].pos) }
             d2 = dist2(pos, @attendees[ai].pos)
             v = @attendees[ai].taste[inst]
             sum += v / d2
-            # end
           end
           if sum > best_v
             best_v = sum
@@ -221,27 +224,91 @@ class Solver
         used_pos_i << pos_i.pop
       end
       all_sum = 0.0
+      mps = Array.new(@mn, Pos.new(0, 0))
       @mn.times do |i|
-        inst = @instruments[order[i]]
-        mp = cand_pos[used_pos_i[i]]
-        @attendees.each do |a|
-          ap = a.pos
-          if @mn.times.all? { |mi| mi == i || !block(mp, cand_pos[used_pos_i[mi]], ap) }
-            d2 = dist2(mp, ap)
-            v = a.taste[inst]
-            all_sum += (1000000 * v / d2).ceil
+        mps[order[i]] = cand_pos[used_pos_i[i]]
+      end
+      @mn.times do |i|
+        mp = mps[i]
+        inst = @instruments[i]
+        angles = rad_sort(mps, i)
+        on = Set(Int32).new
+        near_mi = nil
+        near_dist = 1e10
+        @mn.times do |mi|
+          next if i == mi
+          my = mps[mi].y - mp.y
+          mx = mps[mi].x - mp.x
+          if my < 0 && mx.abs < 5
+            on << mi
+            d2 = my ** 2 + mx ** 2
+            if d2 < near_dist
+              near_dist = d2
+              near_mi = mi
+            end
+          end
+        end
+        angles.each do |ang|
+          case ang[0]
+          when SortType::M
+            mi = ang[1]
+            d2 = dist2(mp, mps[mi])
+            if on.includes?(mi)
+              on.delete(mi)
+              if on.empty?
+                near_mi = nil
+                near_dist = 1e10
+              elsif d2 == near_dist
+                near_dist = 1e10
+                on.each do |omi|
+                  md = dist2(mp, mps[omi])
+                  if md < near_dist
+                    near_dist = md
+                    near_mi = omi
+                  end
+                end
+              end
+            else
+              on << mi
+              if d2 < near_dist
+                near_dist = d2
+                near_mi = mi
+              end
+            end
+          when SortType::A
+            if near_mi.nil?
+              d2 = dist2(mp, @attendees[ang[1]].pos)
+              v = @attendees[ang[1]].taste[inst]
+              all_sum += v / d2
+              # debug({i, ang[1], v})
+            end
           end
         end
       end
+
+      # debug("")
+      # verify_sum = 0.0
+      # @mn.times do |i|
+      #   inst = @instruments[i]
+      #   @an.times do |j|
+      #     a = @attendees[j]
+      #     ap = a.pos
+      #     if @mn.times.all? { |mi| mi == i || !block(mps[i], mps[mi], ap) }
+      #       d2 = dist2(mps[i], ap)
+      #       v = a.taste[inst]
+      #       verify_sum += v / d2
+      #       debug({i, j, v})
+      #     end
+      #   end
+      # end
+      # debug("#{all_sum} #{verify_sum}")
+
       if all_sum > best_res.score
         debug("score:#{all_sum} at turn:#{turn} ")
-        ps = Array.new(@mn, Pos.new(0, 0))
-        @mn.times do |i|
-          ps[order[i]] = cand_pos[used_pos_i[i]]
-        end
-        best_res = Result.new(ps, all_sum)
+        best_res = Result.new(mps, all_sum)
       end
       pos_i += used_pos_i
+      # break
     end
 
     # best_res = solve_one(RES_EMPTY)
@@ -281,6 +348,85 @@ class Solver
     #   turn += 1
     # end
     return best_res
+  end
+
+  def rad_sort(mps, mi)
+    down = [] of Tuple(SortType, Int32)
+    up = [] of Tuple(SortType, Int32)
+    left = [] of Tuple(Float64, SortType, Int32)
+    right = [] of Tuple(Float64, SortType, Int32)
+    mp = mps[mi]
+    @an.times do |i|
+      dy = @attendees[i].pos.y - mp.y
+      dx = @attendees[i].pos.x - mp.x
+      if dx == 0
+        (dy < 0 ? down : up) << {SortType::A, i}
+      elsif dx < 0
+        left << {dy / dx, SortType::A, i}
+      else
+        right << {dy / dx, SortType::A, i}
+      end
+    end
+    near_mi = nil
+    near_dist = 1e10
+    @mn.times do |i|
+      next if i == mi
+      my = mps[i].y - mp.y
+      mx = mps[i].x - mp.x
+      dist2 = my ** 2 + mx ** 2
+      div = 1.0 / dist2
+      b2ac = {(25 * my) ** 2 - (625 - 25 * (mx ** 2)) * dist2, 0.0}.max ** 0.5
+      if mx == 0
+        dy = (-25 * my) * div
+        ty = mps[i].y + dy - mp.y
+        dx_b = (25 - dy ** 2) ** 0.5
+        {-1, 1}.each do |sign|
+          dx = dx_b * sign
+          tx = mps[i].x + dx - mp.x
+          if tx == 0
+            if ty > 0
+              up << {SortType::M, i}
+            end
+          elsif tx < 0
+            left << {ty / tx, SortType::M, i}
+          else
+            right << {ty / tx, SortType::M, i}
+          end
+          assert((ty * dy + tx * dx).abs < 1e-8, ty * dy + tx * dx)
+        end
+      else
+        {-1, 1}.each do |sign|
+          dy = (-25 * my + b2ac * sign) * div
+          dx = (25 - dy ** 2) ** 0.5
+          ty = mps[i].y + dy - mp.y
+          tx = mps[i].x + dx - mp.x
+          if (ty * dy + tx * dx).abs > 1e-8
+            dx *= -1
+            ty = mps[i].y + dy - mp.y
+            tx = mps[i].x + dx - mp.x
+          end
+          if tx.abs < 1e-7
+            if ty > 0
+              up << {SortType::M, i}
+            else
+              if mx == 5
+                right << {-Float64::INFINITY, SortType::M, i}
+              end
+            end
+          elsif tx < 0
+            left << {ty / tx, SortType::M, i}
+          else
+            right << {ty / tx, SortType::M, i}
+          end
+          assert((ty * dy + tx * dx).abs < 1e-8, ty * dy + tx * dx)
+        end
+      end
+    end
+    angles = down.dup
+    angles += right.sort.map { |v| {v[1], v[2]} }
+    angles += up
+    angles += left.sort.map { |v| {v[1], v[2]} }
+    return angles
   end
 
   def accept(diff, cooler)
