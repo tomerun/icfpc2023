@@ -8,7 +8,7 @@ FINAL_COOLER   = (ENV["FC"]? || 100).to_f * 0.0001
 INF            = 1 << 28
 COUNTER        = Counter.new
 STOPWATCH      = StopWatch.new
-RND            = Random.new
+RND            = Random.new(2)
 
 class StopWatch
   def initialize
@@ -123,14 +123,12 @@ RES_EMPTY = Result.new([] of Pos, -1e10)
 def block(ip0, ip1, ap)
   dy = ap.y - ip0.y
   dx = ap.x - ip0.x
-  norm = (dy * dy + dx * dx) ** 0.5
-  ey = dy / norm
-  ex = dx / norm
   dy2 = ip1.y - ip0.y
   dx2 = ip1.x - ip0.x
-  len = dy2 * ey + dx2 * ex
+  len = dy2 * dy + dx2 * dx
   return false if len <= 0
-  dist2 = dy2 * dy2 + dx2 * dx2 - len ** 2
+  norm2 = dy * dy + dx * dx
+  dist2 = dy2 * dy2 + dx2 * dx2 - len ** 2 / norm2
   return dist2 <= 25.0
 end
 
