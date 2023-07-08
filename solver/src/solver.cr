@@ -120,9 +120,25 @@ end
 
 RES_EMPTY = Result.new([] of Pos, -1e10)
 
+def block(ip0, ip1, ap)
+  dy = ap.y - ip0.y
+  dx = ap.x - ip0.x
+  norm = (dy * dy + dx * dx) ** 0.5
+  ey = dy / norm
+  ex = dx / norm
+  dy2 = ip1.y - ip0.y
+  dx2 = ip1.x - ip0.x
+  len = dy2 * ey + dx2 * ex
+  return false if len <= 0
+  dist2 = dy2 * dy2 + dx2 * dx2 - len ** 2
+  return dist2 <= 25.0
+end
+
 class Solver
   @instruments : Array(Int32)
   @attendees : Array(Attendee)
+  @mn : Int32
+  @an : Int32
 
   def initialize
     prob = JSON.parse(STDIN.gets_to_end).as_h
@@ -144,6 +160,8 @@ class Solver
       taste = h["tastes"].as_a.map { |v| v.as_f }
       Attendee.new(Pos.new(y, x), taste)
     end
+    @mn = @instruments.size
+    @an = @attendees.size
   end
 
   def solve(timelimit)
@@ -174,9 +192,8 @@ class Solver
         break
       end
       used_pos_i = [] of Int32
-      order = @instruments.size.times.to_a
+      order = @mn.times.to_a
       shuffle(order)
-      all_sum = 0.0
       order.each do |pi|
         if pos_i.size > max_trial
           max_trial.times do |i|
@@ -190,10 +207,12 @@ class Solver
         {pos_i.size, max_trial}.min.times do |i|
           pos = cand_pos[pos_i[i]]
           sum = 0.0
-          @attendees.size.times do |ai|
+          @an.times do |ai|
+            # if used_pos_i.all? { |upi| !block(pos, cand_pos[upi], @attendees[ai].pos) }
             d2 = dist2(pos, @attendees[ai].pos)
             v = @attendees[ai].taste[inst]
             sum += v / d2
+            # end
           end
           if sum > best_v
             best_v = sum
@@ -202,11 +221,27 @@ class Solver
         end
         pos_i.swap(best_i, -1)
         used_pos_i << pos_i.pop
-        all_sum += best_v
+      end
+      all_sum = 0.0
+      @mn.times do |i|
+        inst = @instruments[order[i]]
+        mp = cand_pos[used_pos_i[i]]
+        @attendees.each do |a|
+          ap = a.pos
+          if @mn.times.all? { |mi| mi == i || !block(mp, cand_pos[used_pos_i[mi]], ap) }
+            d2 = dist2(mp, ap)
+            v = a.taste[inst]
+            all_sum += (1000000 * v / d2).ceil
+          end
+        end
       end
       if all_sum > best_res.score
         debug("score:#{all_sum} at turn:#{turn} ")
-        best_res = Result.new(used_pos_i.map { |i| cand_pos[i] }, all_sum)
+        ps = Array.new(@mn, Pos.new(0, 0))
+        @mn.times do |i|
+          ps[order[i]] = cand_pos[used_pos_i[i]]
+        end
+        best_res = Result.new(ps, all_sum)
       end
       pos_i += used_pos_i
     end
