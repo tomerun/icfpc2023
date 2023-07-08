@@ -130,16 +130,16 @@ end
 
 RES_EMPTY = Result.new([] of Pos, -1e10)
 
-def block(ip0, ip1, ap)
+def block(ip0, op, ap, r)
   dy = ap.y - ip0.y
   dx = ap.x - ip0.x
-  dy2 = ip1.y - ip0.y
-  dx2 = ip1.x - ip0.x
+  dy2 = op.y - ip0.y
+  dx2 = op.x - ip0.x
   len = dy2 * dy + dx2 * dx
   return false if len <= 0
   norm2 = dy * dy + dx * dx
   dist2 = dy2 * dy2 + dx2 * dx2 - len ** 2 / norm2
-  return dist2 <= 25.0
+  return dist2 < r * r
 end
 
 def touch_points(p0, p1, r)
@@ -164,7 +164,7 @@ def touch_points(p0, p1, r)
       dx = (r2 - dy ** 2) ** 0.5
       ty = p1.y + dy - p0.y
       tx = p1.x + dx - p0.x
-      if (ty * dy + tx * dx).abs > 1e-8
+      if (ty * dy + tx * dx).abs > 1e-5
         dx *= -1
       end
       ret << Pos.new(p1.y + dy, p1.x + dx)
@@ -172,7 +172,7 @@ def touch_points(p0, p1, r)
   end
   assert(ret.size == 2, ret.size)
   ret.each do |p|
-    assert(((p.y - p0.y) * (p.y - p1.y) + (p.x - p0.x) * (p.x - p1.x)).abs < 1e-8)
+    assert(((p.y - p0.y) * (p.y - p1.y) + (p.x - p0.x) * (p.x - p1.x)).abs < 1e-5, [p0, p1, r, (p.y - p0.y) * (p.y - p1.y) + (p.x - p0.x) * (p.x - p1.x)])
   end
   return ret
 end
@@ -197,6 +197,12 @@ class Solver
     @stage = Rect.new(bottom + 10.0, left + 10.0, bottom + stage_h - 10.0, left + stage_w - 10.0)
     musicians = prob["musicians"].as_a
     @instruments = musicians.map { |v| v.as_i }
+    @mn = @instruments.size
+    @inst_mi = Array(Array(Int32)).new(@instruments.uniq.size) { [] of Int32 }
+    @mn.times do |i|
+      @inst_mi[@instruments[i]] << i
+    end
+    @quality = Array(Float64).new(@mn, 1.0)
     @attendees = prob["attendees"].as_a.map do |a|
       h = a.as_h
       x = h["x"].as_f
@@ -204,41 +210,55 @@ class Solver
       taste = h["tastes"].as_a.map { |v| v.as_f }
       Attendee.new(Pos.new(y, x), taste)
     end
+    @an = @attendees.size
     @pillars = prob["pillars"].as_a.map do |p|
       ph = p.as_h
       cx, cy = ph["center"].as_a.map { |v| v.as_f }
       r = ph["radius"].as_f
       Pillar.new(Pos.new(cy, cx), r)
     end
-    @mn = @instruments.size
-    @an = @attendees.size
     @blocked_by = Array(Array(Int32)).new(@mn) { Array.new(@an, -1) }
     @blocker_of = Array(Array(Tuple(Int32, Int32))).new(@mn) { [] of Tuple(Int32, Int32) }
   end
 
   def solve(timelimit)
-    @blocked_by.each { |a| a.fill(-1) }
-    @blocker_of.each { |a| a.clear }
-
-    best_res = create_initial_solution()
-    mps = best_res.ps.dup
-
+    best_res = RES_EMPTY
     turn = 0
-    cooler = INITIAL_COOLER
-    begin_time = Time.utc.to_unix_ms
-    total_time = timelimit - begin_time
     while true
-      if (turn & 0xF) == 0
-        cur_time = Time.utc.to_unix_ms
-        if cur_time >= timelimit
-          debug("total_turn: #{turn}")
-          break
-        end
-        ratio = (cur_time - begin_time) / total_time
-        cooler = Math.exp(Math.log(INITIAL_COOLER) * (1.0 - ratio) + Math.log(FINAL_COOLER) * ratio)
+      if Time.utc.to_unix_ms > timelimit
+        debug("total_turn:#{turn}")
+        break
       end
+      @blocked_by.each { |a| a.fill(-1) }
+      @blocker_of.each { |a| a.clear }
+      @quality.fill(1.0)
+
+      res = create_initial_solution()
+      if res.score > best_res.score
+        debug("score:#{res.score} at turn:#{turn} #{verify_score(res.ps)}")
+        best_res = res
+      end
+      mps = best_res.ps.dup
       turn += 1
     end
+
+    # turn = 0
+    # cooler = INITIAL_COOLER
+    # begin_time = Time.utc.to_unix_ms
+    # total_time = timelimit - begin_time
+    # while true
+    #   break
+    #   if (turn & 0xF) == 0
+    #     cur_time = Time.utc.to_unix_ms
+    #     if cur_time >= timelimit
+    #       debug("total_turn: #{turn}")
+    #       break
+    #     end
+    #     ratio = (cur_time - begin_time) / total_time
+    #     cooler = Math.exp(Math.log(INITIAL_COOLER) * (1.0 - ratio) + Math.log(FINAL_COOLER) * ratio)
+    #   end
+    #   turn += 1
+    # end
     # while true
     #   @ps = orig_ps.dup
     #   res = solve_one(cur_res)
@@ -275,7 +295,7 @@ class Solver
     end
     pos_i = cand_pos.size.times.to_a
     used_pos_i = [] of Int32
-    max_trial = 500
+    max_trial = 50
     @mn.times do |mi|
       if pos_i.size > max_trial
         max_trial.times do |i|
@@ -302,13 +322,12 @@ class Solver
       pos_i.swap(best_i, -1)
       used_pos_i << pos_i.pop
     end
-    all_sum = 0.0
     mps = used_pos_i.map { |pi| cand_pos[pi] }
     @mn.times do |i|
       mp = mps[i]
       inst = @instruments[i]
       angles = rad_sort(mps, i)
-      on = Set(Int32).new
+      others_on = Set(Int32).new
       near_mi = nil
       near_dist = 1e10
       @mn.times do |mi|
@@ -316,7 +335,7 @@ class Solver
         my = mps[mi].y - mp.y
         mx = mps[mi].x - mp.x
         if my < 0 && mx.abs < 5
-          on << mi
+          others_on << mi
           d2 = my ** 2 + mx ** 2
           if d2 < near_dist
             near_dist = d2
@@ -324,19 +343,29 @@ class Solver
           end
         end
       end
+      pillar_on = Array.new(@pillars.size, false)
+      pillar_cnt = 0
+      @pillars.size.times do |pi|
+        my = @pillars[pi].pos.y - mp.y
+        mx = @pillars[pi].pos.x - mp.x
+        if my < 0 && mx.abs < @pillars[pi].r
+          pillar_on[pi] = true
+          pillar_cnt += 1
+        end
+      end
       angles.each do |ang|
         case ang[0]
         when SortType::M
           mi = ang[1]
           d2 = dist2(mp, mps[mi])
-          if on.includes?(mi)
-            on.delete(mi)
-            if on.empty?
+          if others_on.includes?(mi)
+            others_on.delete(mi)
+            if others_on.empty?
               near_mi = nil
               near_dist = 1e10
             elsif (d2 - near_dist).abs < 1e-9
               near_dist = 1e10
-              on.each do |omi|
+              others_on.each do |omi|
                 md = dist2(mp, mps[omi])
                 if md < near_dist
                   near_dist = md
@@ -345,28 +374,57 @@ class Solver
               end
             end
           else
-            on << mi
+            others_on << mi
             if d2 < near_dist
               near_dist = d2
               near_mi = mi
             end
           end
         when SortType::A
-          if near_mi.nil?
-            d2 = dist2(mp, @attendees[ang[1]].pos)
-            v = @attendees[ang[1]].taste[inst]
-            all_sum += v / d2
+          if near_mi.nil? && pillar_cnt == 0
+            # not blocked
             # debug({i, ang[1], v})
           else
-            @blocked_by[i][ang[1]] = near_mi
-            @blocker_of[near_mi] << {i, ang[1]}
+            if near_mi.nil?
+              @blocked_by[i][ang[1]] = BLOCK_BY_PILLAR
+            else
+              @blocked_by[i][ang[1]] = near_mi
+              @blocker_of[near_mi] << {i, ang[1]}
+            end
           end
         when SortType::P
-          @blocked_by[i][ang[1]] = BLOCK_BY_PILLAR
+          if pillar_on[ang[1]]
+            pillar_cnt -= 1
+            pillar_on[ang[1]] = false
+          else
+            pillar_cnt += 1
+            pillar_on[ang[1]] = true
+          end
         end
       end
     end
-    return Result.new(mps, all_sum)
+    if !@pillars.empty?
+      @mn.times do |i|
+        @inst_mi[@instruments[i]].each do |oi|
+          next if i >= oi
+          q = 1.0 / (dist2(mps[i], mps[oi]) ** 0.5)
+          @quality[i] += q
+          @quality[oi] += q
+        end
+      end
+    end
+    score = 0.0
+    @mn.times do |i|
+      @an.times do |j|
+        next if @blocked_by[i][j] != EMPTY
+        d2 = dist2(mps[i], @attendees[j].pos)
+        v = @attendees[j].taste[@instruments[i]]
+        score += v / d2 * @quality[i]
+        # debug([i, j, v / d2 * @quality[i]])
+      end
+    end
+    # debug([score, verify_score(mps)])
+    return Result.new(mps, score)
   end
 
   def rad_sort(mps, mi)
@@ -387,15 +445,24 @@ class Solver
       end
     end
     @pillars.size.times do |i|
-      # dy = @pillars[i].pos.y - mp.y
-      # dx = @pillars[i].pos.x - mp.x
-      # if dx == 0
-      #   (dy < 0 ? down : up) << {SortType::A, i}
-      # elsif dx < 0
-      #   left << {dy / dx, SortType::A, i}
-      # else
-      #   right << {dy / dx, SortType::A, i}
-      # end
+      ps = touch_points(mp, @pillars[i].pos, @pillars[i].r)
+      ps.each do |p|
+        ty = p.y - mp.y
+        tx = p.x - mp.x
+        if tx.abs < 1e-8
+          if ty > 0
+            up << {SortType::P, i}
+          else
+            if @pillars[i].pos.x == mp.x + @pillars[i].r
+              right << {-Float64::INFINITY, SortType::P, i}
+            end
+          end
+        elsif tx < 0
+          left << {ty / tx, SortType::P, i}
+        else
+          right << {ty / tx, SortType::P, i}
+        end
+      end
     end
     near_mi = nil
     near_dist = 1e10
@@ -435,16 +502,26 @@ class Solver
   end
 
   def verify_score(mps)
+    qual = Array.new(@mn, 1.0)
+    @mn.times do |i|
+      @mn.times do |j|
+        next if j == i || @instruments[i] != @instruments[j]
+        d = dist2(mps[i], mps[j]) ** 0.5
+        qual[i] += 1.0 / d
+      end
+    end
     sum = 0.0
     @mn.times do |i|
       inst = @instruments[i]
       @an.times do |j|
         a = @attendees[j]
         ap = a.pos
-        if @mn.times.all? { |mi| mi == i || !block(mps[i], mps[mi], ap) }
+        if @mn.times.all? { |mi| mi == i || !block(mps[i], mps[mi], ap, 5.0) } &&
+           @pillars.all? { |pl| !block(mps[i], pl.pos, ap, pl.r) }
           d2 = dist2(mps[i], ap)
           v = a.taste[inst]
-          sum += v / d2
+          sum += v / d2 * qual[i]
+          # debug([i, j, v / d2 * qual[i]])
         end
       end
     end
