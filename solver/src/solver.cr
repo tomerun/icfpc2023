@@ -116,6 +116,12 @@ enum SortType
   P
 end
 
+enum ChangeType
+  SWAP
+  JUMP
+  MOVE
+end
+
 class Result
   getter :score, :ps
 
@@ -138,7 +144,9 @@ def block(ip0, op, ap, r)
   len = dy2 * dy + dx2 * dx
   return false if len <= 0
   norm2 = dy * dy + dx * dx
-  dist2 = dy2 * dy2 + dx2 * dx2 - len ** 2 / norm2
+  len2 = len * len / norm2
+  return false if len2 > norm2
+  dist2 = dy2 * dy2 + dx2 * dx2 - len2
   return dist2 < r * r
 end
 
@@ -202,6 +210,7 @@ class Solver
     @mn.times do |i|
       @inst_mi[@instruments[i]] << i
     end
+    @in = @inst_mi.size
     @quality = Array(Float64).new(@mn, 1.0)
     @attendees = prob["attendees"].as_a.map do |a|
       h = a.as_h
@@ -219,6 +228,7 @@ class Solver
     end
     @blocked_by = Array(Array(Int32)).new(@mn) { Array.new(@an, -1) }
     @blocker_of = Array(Array(Tuple(Int32, Int32))).new(@mn) { [] of Tuple(Int32, Int32) }
+    @raw_score = Array(Float64).new(@mn, 0.0)
   end
 
   def solve(timelimit)
@@ -229,10 +239,6 @@ class Solver
         debug("total_turn:#{turn}")
         break
       end
-      @blocked_by.each { |a| a.fill(-1) }
-      @blocker_of.each { |a| a.clear }
-      @quality.fill(1.0)
-
       res = create_initial_solution()
       if res.score > best_res.score
         debug("score:#{res.score} at turn:#{turn} #{verify_score(res.ps)}")
@@ -240,44 +246,89 @@ class Solver
       end
       mps = best_res.ps.dup
       turn += 1
+      exit
     end
 
-    # turn = 0
-    # cooler = INITIAL_COOLER
-    # begin_time = Time.utc.to_unix_ms
-    # total_time = timelimit - begin_time
-    # while true
-    #   break
-    #   if (turn & 0xF) == 0
-    #     cur_time = Time.utc.to_unix_ms
-    #     if cur_time >= timelimit
-    #       debug("total_turn: #{turn}")
-    #       break
-    #     end
-    #     ratio = (cur_time - begin_time) / total_time
-    #     cooler = Math.exp(Math.log(INITIAL_COOLER) * (1.0 - ratio) + Math.log(FINAL_COOLER) * ratio)
-    #   end
-    #   turn += 1
-    # end
-    # while true
-    #   @ps = orig_ps.dup
-    #   res = solve_one(cur_res)
-    #   if accept(res.score - cur_res.score, cooler)
-    #     COUNTER.add(0)
-    #     if res.score > best_res.score
-    #       COUNTER.add(1)
-    #       debug("best_score:#{res.score} turn:#{turn}")
-    #       best_res = res
-    #       last_update_turn = turn
-    #     end
-    #     cur_res = res
-    #   end
-    #   turn += 1
-    # end
+    change_types = [] of ChangeType
+    # 10.times { change_types << ChangeType::MOVE }
+    # 10.times { change_types << ChangeType::JUMP }
+    if @in != 1
+      10.times { change_types << ChangeType::SWAP }
+    end
+    turn = 0
+    cooler = INITIAL_COOLER
+    begin_time = Time.utc.to_unix_ms
+    total_time = timelimit - begin_time
+    while true
+      break
+      if (turn & 0xF) == 0
+        cur_time = Time.utc.to_unix_ms
+        if cur_time >= timelimit
+          debug("total_turn: #{turn}")
+          break
+        end
+        ratio = (cur_time - begin_time) / total_time
+        cooler = Math.exp(Math.log(INITIAL_COOLER) * (1.0 - ratio) + Math.log(FINAL_COOLER) * ratio)
+      end
+      turn += 1
+      change_type = change_types[RND.rand(change_types.size)]
+      case change_type
+      when ChangeType::SWAP
+        i0 = RND.rand(@in)
+        i1 = RND.rand(@in - 1)
+        i1 += 1 if i1 >= i0
+        mi0 = @inst_mi[i0][RND.rand(@inst_mi[i0].size)]
+        mi1 = @inst_mi[i1][RND.rand(@inst_mi[i1].size)]
+        diff = 0.0
+        diff -= @raw_score[mi0] * @quality[mi0]
+        diff -= @raw_score[mi1] * @quality[mi1]
+        new_q0 = 1.0
+        new_q1 = 1.0
+        if !@pillars.empty?
+          @inst_mi[i0].each do |mi|
+            next if mi == mi0
+            v = 1.0 / (dist2(mps[mi], mps[mi1]) ** 0.5)
+            new_q0 += v
+            v_old = 1.0 / dist2(mps[mi], mps[mi0]) ** 0.5
+            diff += (v - v_old) * @raw_score[mi]
+          end
+          @inst_mi[i1].each do |mi|
+            next if mi == mi1
+            v = 1.0 / (dist2(mps[mi], mps[mi0]) ** 0.5)
+            new_q1 += v
+            v_old = 1.0 / dist2(mps[mi], mps[mi1]) ** 0.5
+            diff += (v - v_old) * @raw_score[mi]
+          end
+        end
+        new_raw0 = 0.0
+        new_raw1 = 0.0
+        @an.size.times do |ai|
+          ap = @attendees[ai].pos
+          if @blocked_by[mi0][ai] == EMPTY
+            d2 = dist2(mps[mi0], ap)
+            new_raw0 += @attendees[ai].taste[i1] / d2
+          end
+          if @blocked_by[mi1][ai] == EMPTY
+            d2 = dist2(mps[mi1], ap)
+            new_raw1 += @attendees[ai].taste[i0] / d2
+          end
+        end
+        diff += new_raw0 * new_q1
+        diff += new_raw1 * new_q0
+        if accept(diff, cooler)
+        end
+      when ChangeType::MOVE
+      when ChangeType::JUMP
+      end
+    end
     return best_res
   end
 
   def create_initial_solution
+    @blocked_by.each { |a| a.fill(-1) }
+    @blocker_of.each { |a| a.clear }
+    @quality.fill(1.0)
+    @raw_score.fill(0.0)
     cand_pos = [] of Pos
     eps = 1e-5
     y = @stage.bottom
@@ -343,14 +394,16 @@ class Solver
           end
         end
       end
-      pillar_on = Array.new(@pillars.size, false)
-      pillar_cnt = 0
+      pillar_on = Set(Int32).new
       @pillars.size.times do |pi|
         my = @pillars[pi].pos.y - mp.y
         mx = @pillars[pi].pos.x - mp.x
         if my < 0 && mx.abs < @pillars[pi].r
-          pillar_on[pi] = true
-          pillar_cnt += 1
+          pillar_on << pi
+          d2 = my ** 2 + mx ** 2
+          if d2 < near_dist
+            near_dist = d2
+          end
         end
       end
       angles.each do |ang|
@@ -363,6 +416,12 @@ class Solver
             if others_on.empty?
               near_mi = nil
               near_dist = 1e10
+              pillar_on.each do |pi|
+                pd2 = dist2(mp, @pillars[pi].pos)
+                if pd2 < near_dist
+                  near_dist = pd2
+                end
+              end
             elsif (d2 - near_dist).abs < 1e-9
               near_dist = 1e10
               others_on.each do |omi|
@@ -381,9 +440,14 @@ class Solver
             end
           end
         when SortType::A
-          if near_mi.nil? && pillar_cnt == 0
-            # not blocked
-            # debug({i, ang[1], v})
+          if near_dist > dist2(mp, @attendees[ang[1]].pos)
+            # if pillar_on.all? { |pi| !block(mp, @pillars[pi].pos, @attendees[ang[1]].pos, @pillars[pi].r) }
+            #   # not blocked
+            #   # debug({i, ang[1], v})
+            # else
+            #   debug("block_by_pillar #{near_dist} #{dist2(mp, @attendees[ang[1]].pos)}")
+            #   @blocked_by[i][ang[1]] = BLOCK_BY_PILLAR
+            # end
           else
             if near_mi.nil?
               @blocked_by[i][ang[1]] = BLOCK_BY_PILLAR
@@ -393,12 +457,21 @@ class Solver
             end
           end
         when SortType::P
-          if pillar_on[ang[1]]
-            pillar_cnt -= 1
-            pillar_on[ang[1]] = false
+          d2 = dist2(mp, @pillars[ang[1]].pos)
+          if pillar_on.includes?(ang[1])
+            pillar_on.delete(ang[1])
+            if (d2 - near_dist).abs < 1e-4
+              near_dist = 1e10
+              pillar_on.each do |pi|
+                pd2 = dist2(mp, @pillars[pi].pos)
+                if pd2 < near_dist
+                  near_dist = pd2
+                end
+              end
+            end
           else
-            pillar_cnt += 1
-            pillar_on[ang[1]] = true
+            pillar_on << ang[1]
+            near_dist = {near_dist, d2}.min
           end
         end
       end
@@ -419,7 +492,9 @@ class Solver
         next if @blocked_by[i][j] != EMPTY
         d2 = dist2(mps[i], @attendees[j].pos)
         v = @attendees[j].taste[@instruments[i]]
-        score += v / d2 * @quality[i]
+        raw = v / d2
+        @raw_score[i] += raw
+        score += raw * @quality[i]
         # debug([i, j, v / d2 * @quality[i]])
       end
     end
@@ -496,9 +571,10 @@ class Solver
 
   def accept(diff, cooler)
     return true if diff >= 0
-    v = diff * cooler
-    return false if v < -8
-    return RND.next_double < Math.exp(v)
+    return false
+    # v = diff * cooler
+    # return false if v < -8
+    # return RND.next_double < Math.exp(v)
   end
 
   def verify_score(mps)
