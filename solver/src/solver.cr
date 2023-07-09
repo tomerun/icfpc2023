@@ -3,7 +3,7 @@ require "json"
 START_TIME      = Time.utc.to_unix_ms
 TL              = (ENV["TL"]? || 2000).to_i
 PART            = (ENV["PART"]? || 1).to_i
-INITIAL_TEMP    = (ENV["IT"]? || 1000).to_f * 1e-3
+INITIAL_TEMP    = (ENV["IT"]? || 100).to_f * 1e-3
 FINAL_TEMP      = (ENV["FT"]? || 10).to_f * 1e-3
 INF             = 1 << 28
 EMPTY           = -1
@@ -227,13 +227,11 @@ class Solver
     best_res = create_initial_solution()
     debug("initial_score:#{best_res.score} #{verify_score(best_res.ps)}")
     STDERR.puts("create_initial_solution:#{Time.utc.to_unix_ms - START_TIME}")
-    if @in == 1
-      return best_res
-    end
 
     change_types = [] of ChangeType
     # 10.times { change_types << ChangeType::MOVE }
-    cnt_cand_pos = (((@stage.right - @stage.left) / 20).floor.to_i + 1) * ((@stage.top - @stage.bottom) / (10 * (3 ** 0.5))).ceil.to_i
+    cnt_cand_pos = (((@stage.right - @stage.left) / 20).floor.to_i + 1) * (((@stage.top - @stage.bottom) / (10 * (3 ** 0.5))).floor.to_i + 1)
+    debug("cnt_cand_pos:#{cnt_cand_pos}")
     {(cnt_cand_pos / @mn).ceil.to_i, 10}.min.times { change_types << ChangeType::JUMP }
     if @in != 1
       10.times { change_types << ChangeType::SWAP }
@@ -247,7 +245,25 @@ class Solver
     begin_time = Time.utc.to_unix_ms
     total_time = timelimit - begin_time
     while true
-      if (turn & 0x3FF) == 0
+      # debug("score:#{score} verify_score:#{verify_score(mps)}")
+      # @mn.times do |vmi|
+      #   @an.times do |vai|
+      #     bi = @blocked_by[vmi][vai]
+      #     if bi >= 0
+      #       assert(block(mps[vmi], mps[bi], @attendees[vai].pos, 5.001), [vmi, vai, bi])
+      #       assert(@blocker_of[bi].includes?({vmi, vai}), [vmi, vai, bi])
+      #     end
+      #   end
+      # end
+      # @mn.times do |vmi|
+      #   @blocker_of[vmi].each do |t|
+      #     vmi2, vai = t
+      #     assert(block(mps[vmi2], mps[vmi], @attendees[vai].pos, 5.001), [vmi, vmi2, vai])
+      #     assert(@blocked_by[vmi2][vai] == vmi, [vmi, vmi2, vai, @blocked_by[vmi2][vai]])
+      #   end
+      # end
+
+      if (turn & 0x3F) == 0
         cur_time = Time.utc.to_unix_ms
         if cur_time >= timelimit
           STDERR.puts("total_turn: #{turn}")
@@ -323,13 +339,24 @@ class Solver
             end
           end
           @blocked_by.swap(mi0, mi1)
+          @blocker_of.swap(mi0, mi1)
           @an.times do |ai|
             bi = @blocked_by[mi0][ai]
+            assert(bi != mi1)
+            if bi == mi0
+              @blocked_by[mi0][ai] = mi1
+              bi = mi1
+            end
             if bi >= 0
               idx = @blocker_of[bi].index({mi1, ai}).not_nil!
               @blocker_of[bi][idx] = {mi0, ai}
             end
             bi = @blocked_by[mi1][ai]
+            assert(bi != mi0)
+            if bi == mi1
+              @blocked_by[mi1][ai] = mi0
+              bi = mi0
+            end
             if bi >= 0
               idx = @blocker_of[bi].index({mi0, ai}).not_nil!
               @blocker_of[bi][idx] = {mi1, ai}
@@ -338,6 +365,20 @@ class Solver
           if score > best_res.score
             best_res = Result.new(mps.dup, score)
             debug("score:#{score} at turn:#{turn} #{change_type}")
+          end
+          @blocker_of[mi0].each do |t|
+            bmi, bai = t
+            if bmi != mi1
+              assert(@blocked_by[bmi][bai] == mi1)
+              @blocked_by[bmi][bai] = mi0
+            end
+          end
+          @blocker_of[mi1].each do |t|
+            bmi, bai = t
+            if bmi != mi0
+              assert(@blocked_by[bmi][bai] == mi0)
+              @blocked_by[bmi][bai] = mi1
+            end
           end
         end
       when ChangeType::MOVE
@@ -357,10 +398,10 @@ class Solver
         next if !ok
         np = Pos.new(ny, nx)
         mp = mps[mi0]
+        mps[mi0] = np
         inst = @instruments[mi0]
         diff = 0.0
         diff -= @raw_score[mi0] * @quality[mi0]
-        new_q = 1.0
         new_quality = @quality.dup
         new_quality[mi0] = 1.0
         new_raw = @raw_score.dup
@@ -375,94 +416,124 @@ class Solver
             new_quality[mi] += v - v_old
           end
         end
-        # new_blocked_by = Array.new(@an, EMPTY)
-        # # 新しく置いた位置でのブロック関係
-        # omp = mps[mi0]
-        # mps[mi0] = np
-        # angles = rad_sort(mps, mi0)
-        # others_on = Set(Int32).new
-        # near_mi = nil
-        # near_dist = 1e10
-        # @mn.times do |mi|
-        #   next if i == mi
-        #   my = mps[mi].y - mp.y
-        #   mx = mps[mi].x - mp.x
-        #   if my < 0 && mx.abs < 5
-        #     others_on << mi
-        #     d2 = my ** 2 + mx ** 2
-        #     if d2 < near_dist
-        #       near_dist = d2
-        #       near_mi = mi
-        #     end
-        #   end
-        # end
-        # pillar_on = Set(Int32).new
-        # @pillars.size.times do |pi|
-        #   my = @pillars[pi].pos.y - mp.y
-        #   mx = @pillars[pi].pos.x - mp.x
-        #   if my < 0 && mx.abs < @pillars[pi].r
-        #     pillar_on << pi
-        #     d2 = my ** 2 + mx ** 2
-        #     if d2 < near_dist
-        #       near_dist = d2
-        #     end
-        #   end
-        # end
+        new_blocked_by = Array.new(@an, EMPTY)
+        # 新しく置いた位置でのブロック関係
+        angles = rad_sort(mps, mi0) do |ai, blocker|
+          if blocker == EMPTY
+            d2 = dist2(np, @attendees[ai].pos)
+            v = @attendees[ai].taste[inst] / d2
+            new_raw[mi0] += v
+          else
+            new_blocked_by[ai] = blocker
+          end
+        end
+        diff += new_raw[mi0] * new_quality[mi0]
 
-        # diff += new_raw[mi0] * new_quality[mi0]
-        # mps[mi0] = omp
+        # 動かしたことで届くようになった
+        # debug("blocker_size:#{@blocker_of[mi0].size}")
+        @blocker_of[mi0].each do |mi, ai|
+          is_blocked = @mn.times.any? { |bmi| bmi != mi && block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0) }
+          is_blocked |= @pillars.any? { |pl| block(mps[mi], pl.pos, @attendees[ai].pos, pl.r) }
+          if !is_blocked
+            d2 = dist2(mps[mi], @attendees[ai].pos)
+            v = @attendees[ai].taste[@instruments[mi]] / d2
+            diff += v * new_quality[mi]
+            new_raw[mi] += v
+          end
+        end
+        # 動かしたことで遮られた
+        @mn.times do |mi|
+          next if mi == mi0
+          @an.times do |ai|
+            next if @blocked_by[mi][ai] != EMPTY
+            if block(mps[mi], np, @attendees[ai].pos, 5.0)
+              d2 = dist2(mps[mi], @attendees[ai].pos)
+              v = @attendees[ai].taste[@instruments[mi]] / d2
+              diff -= v * new_quality[mi]
+              new_raw[mi] -= v
+            end
+          end
+        end
+        if accept(diff, cooler)
+          score += diff
+          @quality = new_quality
+          @raw_score = new_raw
+          @blocker_of[mi0].clear
 
-        # # 動かしたことで届くようになった
-        # @blocker_of[mi0].each do |mi, ai|
-        #   is_blocked = @mn.times.any? { |bmi| bmi != mi0 && bmi != mi && block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0) }
-        #   is_blocked |= block(mps[mi], np, @attendees[ai].pos, 5.0)
-        #   is_blocked |= @pillars.any? { |pl| block(mps[mi], pl.pos, @attendees[ai].pos, pl.r) }
-        #   if !is_blocked
-        #     d2 = dist2(mps[mi], @attendees[ai].pos)
-        #     v = @attendees[ai].taste[@instruments[mi]] / d2
-        #     diff += v * new_quality[mi]
-        #     new_raw[mi] += v
-        #   end
-        # end
-        # # 動かしたことで遮られた
-        # @mn.times do |mi|
-        #   next if mi == mi0
-        #   @an.times do |ai|
-        #     next if @blocked_by[mi][ai] != EMPTY
-        #     if block(mps[mi], np, @attendees[ai].pos, 5.0)
-        #       d2 = dist2(mps[mi], @attendees[ai].pos)
-        #       v = @attendees[ai].taste[@instruments[mi]] / d2
-        #       diff -= v * new_quality[mi]
-        #       new_raw[mi] -= v
-        #     end
-        #   end
-        # end
+          # 他の人たちへの影響
+          @mn.times do |mi|
+            next if mi == mi0
+            @an.times do |ai|
+              if @blocked_by[mi][ai] == mi0
+                min_dist = 1e10
+                block_by = EMPTY
+                @mn.times do |bmi|
+                  next if mi == bmi
+                  if block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0)
+                    d2 = dist2(mps[mi], mps[bmi])
+                    if d2 < min_dist
+                      min_dist = d2
+                      block_by = bmi
+                    end
+                  end
+                end
+                if block_by == EMPTY
+                  @pillars.each do |pl|
+                    if block(mps[mi], pl.pos, @attendees[ai].pos, pl.r)
+                      d2 = dist2(mps[mi], pl.pos)
+                      if d2 < min_dist
+                        min_dist = d2
+                        block_by = BLOCK_BY_PILLAR
+                        break
+                      end
+                    end
+                  end
+                end
+                @blocked_by[mi][ai] = block_by
+                if block_by >= 0
+                  @blocker_of[block_by] << {mi, ai}
+                end
+              elsif block(mps[mi], np, @attendees[ai].pos, 5.0)
+                if @blocked_by[mi][ai] == EMPTY
+                  cd2 = 1e10
+                elsif @blocked_by[mi][ai] == BLOCK_BY_PILLAR
+                  cd2 = 1e10
+                else
+                  cd2 = dist2(mps[mi], mps[@blocked_by[mi][ai]])
+                end
+                if dist2(mps[mi], np) < cd2
+                  if @blocked_by[mi][ai] >= 0
+                    assert(@blocker_of[@blocked_by[mi][ai]].includes?({mi, ai}))
+                    @blocker_of[@blocked_by[mi][ai]].delete({mi, ai})
+                  end
+                  @blocked_by[mi][ai] = mi0
+                  @blocker_of[mi0] << {mi, ai}
+                end
+              end
+            end
+          end
 
-        # if accept(diff, cooler)
-        #   score += diff
-        #   @quality[mi0] = new_q0
-        #   @raw_score[mi0] = new_raw0
-        #   if !@pillars.empty?
-        #     @inst_mi[i0].each do |mi|
-        #       next if mi == mi0
-        #       v = 1.0 / (dist2(mps[mi], mps[mi0]) ** 0.5)
-        #       v_old = 1.0 / (dist2(mps[mi], mps[mi1]) ** 0.5)
-        #       @quality[mi] += v - v_old
-        #     end
-        #   end
-        #   mps[mi0] = np
-        #   @an.times do |ai|
-        #     bi = @blocked_by[mi0][ai]
-        #     if bi >= 0
-        #       idx = @blocker_of[bi].index({mi1, ai}).not_nil!
-        #       @blocker_of[bi][idx] = {mi0, ai}
-        #     end
-        #   end
-        #   if score > best_res.score
-        #     best_res = Result.new(mps.dup, score)
-        #     debug("score:#{score} at turn:#{turn} #{change_type}")
-        #   end
-        # end
+          # 移動先からの線のブロック
+          @an.times do |ai|
+            if @blocked_by[mi0][ai] >= 0
+              blockers = @blocker_of[@blocked_by[mi0][ai]]
+              idx = blockers.index({mi0, ai}).not_nil!
+              blockers.swap(idx, -1)
+              blockers.pop
+            end
+            if new_blocked_by[ai] >= 0
+              @blocker_of[new_blocked_by[ai]] << {mi0, ai}
+            end
+          end
+          @blocked_by[mi0] = new_blocked_by
+
+          if score > best_res.score
+            best_res = Result.new(mps.dup, score)
+            debug("score:#{score} at turn:#{turn} #{change_type}")
+          end
+        else
+          mps[mi0] = mp
+        end
       end
     end
 
