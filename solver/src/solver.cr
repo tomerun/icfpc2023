@@ -223,7 +223,7 @@ class Solver
     end
     @blocked_by = Array(Array(Int32)).new(@mn) { Array.new(@an, -1) }
     # blocker_of[i] = [{j, k}] := musician i is blocking sound of musician j to attendee k
-    @blocker_of = Array(Array(Tuple(Int32, Int32))).new(@mn) { [] of Tuple(Int32, Int32) }
+    @blocker_of = Array(Set(Tuple(Int32, Int32))).new(@mn) { Set(Tuple(Int32, Int32)).new }
     @raw_score = Array(Float64).new(@mn, 0.0)
   end
 
@@ -267,7 +267,7 @@ class Solver
       #   end
       # end
 
-      if (turn & 0x3F) == 0
+      if (turn & 0x3FF) == 0
         cur_time = Time.utc.to_unix_ms
         if cur_time >= timelimit
           STDERR.puts("total_turn: #{turn}")
@@ -281,6 +281,7 @@ class Solver
       change_type = change_types[RND.rand(change_types.size)]
       case change_type
       when ChangeType::SWAP
+        COUNTER.add(1)
         i0 = RND.rand(@in)
         i1 = RND.rand(@in - 1)
         i1 += 1 if i1 >= i0
@@ -323,6 +324,7 @@ class Solver
         diff += new_raw0 * new_q0
         diff += new_raw1 * new_q1
         if accept(diff, cooler)
+          COUNTER.add(2)
           score += diff
           mps.swap(mi0, mi1)
           @quality[mi0] = new_q0
@@ -353,8 +355,11 @@ class Solver
               bi = mi1
             end
             if bi >= 0
-              idx = @blocker_of[bi].index({mi1, ai}).not_nil!
-              @blocker_of[bi][idx] = {mi0, ai}
+              assert(@blocker_of[bi].includes?({mi1, ai}))
+              if !@blocker_of[bi].includes?({mi0, ai})
+                @blocker_of[bi].delete({mi1, ai})
+                @blocker_of[bi] << {mi0, ai}
+              end
             end
             bi = @blocked_by[mi1][ai]
             assert(bi != mi0)
@@ -363,14 +368,12 @@ class Solver
               bi = mi0
             end
             if bi >= 0
-              idx = @blocker_of[bi].index({mi0, ai}).not_nil!
-              @blocker_of[bi][idx] = {mi1, ai}
+              assert(@blocker_of[bi].includes?({mi0, ai}))
+              if !@blocker_of[bi].includes?({mi1, ai})
+                @blocker_of[bi].delete({mi0, ai})
+                @blocker_of[bi] << {mi1, ai}
+              end
             end
-          end
-          amp_score, amp = amplified_score()
-          if amp_score > best_res.score
-            best_res = Result.new(mps.dup, amp_score, amp)
-            debug("score:#{score} amp_score:#{amp_score} at turn:#{turn} #{change_type}")
           end
           @blocker_of[mi0].each do |t|
             bmi, bai = t
@@ -386,15 +389,21 @@ class Solver
               @blocked_by[bmi][bai] = mi1
             end
           end
+          amp_score, amp = amplified_score()
+          if amp_score > best_res.score
+            best_res = Result.new(mps.dup, amp_score, amp)
+            debug("score:#{score} amp_score:#{amp_score} at turn:#{turn} #{change_type}")
+          end
         end
       when ChangeType::MOVE
+        COUNTER.add(11)
         mi0 = RND.rand(@mn)
         if RND.rand < jump_prob
           change_type = ChangeType::JUMP
           ny = RND.rand * (@stage.top - @stage.bottom) + @stage.bottom
           nx = RND.rand * (@stage.right - @stage.left) + @stage.left
           ok = false
-          20.times do
+          10.times do
             if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 20 ** 2 }
               ok = true
               break
@@ -407,7 +416,7 @@ class Solver
           ny = (mps[mi0].y + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.bottom, @stage.top)
           nx = (mps[mi0].x + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.left, @stage.right)
           ok = false
-          5.times do
+          10.times do
             if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 20 ** 2 }
               ok = true
               break
@@ -476,6 +485,7 @@ class Solver
           end
         end
         if accept(diff, cooler)
+          COUNTER.add(12)
           score += diff
           @quality = new_quality
           @raw_score = new_raw
@@ -538,9 +548,8 @@ class Solver
           @an.times do |ai|
             if @blocked_by[mi0][ai] >= 0
               blockers = @blocker_of[@blocked_by[mi0][ai]]
-              idx = blockers.index({mi0, ai}).not_nil!
-              blockers.swap(idx, -1)
-              blockers.pop
+              assert(blockers.includes?({mi0, ai}))
+              blockers.delete({mi0, ai})
             end
             if new_blocked_by[ai] >= 0
               @blocker_of[new_blocked_by[ai]] << {mi0, ai}
@@ -879,9 +888,9 @@ def main
     end
   end
   puts best_res
-  STDERR.puts("final_score:#{best_res.score}")
+  debug(COUNTER)
   # debug(STOPWATCH)
-  # debug(COUNTER)
+  STDERR.puts("final_score:#{best_res.score}")
 end
 
 main
