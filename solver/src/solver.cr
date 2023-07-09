@@ -341,6 +341,7 @@ class Solver
           @quality[mi1] = new_q1
           @raw_score[mi0] = new_raw0
           @raw_score[mi1] = new_raw1
+          # debug("mi0:#{mi0} score:#{score} verify_score:#{verify_score(mps)} #{change_type}")
           if !@pillars.empty?
             @inst_mi[i0].each do |mi|
               next if mi == mi0
@@ -487,7 +488,8 @@ class Solver
         STOPWATCH.stop("new_sort")
         STOPWATCH.start("new")
         @blocker_of[mi0].each do |mi, ai|
-          is_blocked = near_mis.any? { |bmi| bmi != mi && block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0) }
+          is_blocked = block(mps[mi], np, @attendees[ai].pos, 5.0)
+          is_blocked |= near_mis.any? { |bmi| bmi != mi && block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0) }
           is_blocked |= @pillars.any? { |pl| block(mps[mi], pl.pos, @attendees[ai].pos, pl.r) }
           if !is_blocked
             d2 = dist2(mps[mi], @attendees[ai].pos)
@@ -501,7 +503,7 @@ class Solver
         STOPWATCH.start("shut")
         @mn.times do |mi|
           next if mi == mi0
-          min_yb, max_yb, min_xb, max_xb = get_att_bucket(mp, mps[mi])
+          min_yb, max_yb, min_xb, max_xb = get_att_bucket(np, mps[mi])
           if (max_yb - min_yb + 1) / @att_rows.size < (max_xb - min_xb + 1) / @att_cols.size
             min_yb.upto(max_yb) do |yb|
               @att_rows[yb].each do |ai|
@@ -532,9 +534,9 @@ class Solver
         if accept(diff, cooler)
           COUNTER.add(12)
           score += diff
-          # debug("mi0:#{mi0} score:#{score} verify_score:#{verify_score(mps)}")
           @quality = new_quality
           @raw_score = new_raw
+          # debug("mi0:#{mi0} score:#{score} verify_score:#{verify_score(mps)} #{change_type}")
 
           # 他の人たちへの影響
           STOPWATCH.start("after")
@@ -979,6 +981,7 @@ class Solver
     sum = 0.0
     @mn.times do |i|
       inst = @instruments[i]
+      raw = 0.0
       @an.times do |j|
         a = @attendees[j]
         ap = a.pos
@@ -987,9 +990,10 @@ class Solver
           d2 = dist2(mps[i], ap)
           v = a.taste[inst]
           sum += v / d2 * qual[i]
-          # debug([i, j, v / d2 * qual[i]])
+          raw += v / d2
         end
       end
+      # debug([i, @raw_score[i], raw])
     end
     return sum
   end
