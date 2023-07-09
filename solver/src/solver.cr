@@ -532,6 +532,7 @@ class Solver
         if accept(diff, cooler)
           COUNTER.add(12)
           score += diff
+          # debug("mi0:#{mi0} score:#{score} verify_score:#{verify_score(mps)}")
           @quality = new_quality
           @raw_score = new_raw
 
@@ -574,7 +575,7 @@ class Solver
 
           @mn.times do |mi|
             next if mi == mi0
-            min_yb, max_yb, min_xb, max_xb = get_att_bucket(mp, np)
+            min_yb, max_yb, min_xb, max_xb = get_att_bucket(np, mps[mi])
             if (max_yb - min_yb + 1) / @att_rows.size < (max_xb - min_xb + 1) / @att_cols.size
               min_yb.upto(max_yb) do |yb|
                 @att_rows[yb].each do |ai|
@@ -643,6 +644,26 @@ class Solver
             best_res = Result.new(mps.dup, amp_score, amp)
             debug("score:#{score} amp_score:#{amp_score} at turn:#{turn} #{change_type}")
           end
+
+          # @mn.times do |vmi|
+          #   @an.times do |vai|
+          #     bi = @blocked_by[vmi][vai]
+          #     if bi >= 0
+          #       assert(block(mps[vmi], mps[bi], @attendees[vai].pos, 5.001), [vmi, vai, bi])
+          #       assert(@blocker_of[bi].includes?({vmi, vai}), [vmi, vai, bi])
+          #     elsif bi == EMPTY
+          #       assert(!@blocker_of[mi0].includes?({vmi, vai}), [vmi, vai, mi0])
+          #       assert(!block(mps[vmi], mps[mi0], @attendees[vai].pos, 4.999), [vmi, vai, mi0])
+          #     end
+          #   end
+          # end
+          # @mn.times do |vmi|
+          #   @blocker_of[vmi].each do |t|
+          #     vmi2, vai = t
+          #     assert(block(mps[vmi2], mps[vmi], @attendees[vai].pos, 5.001), [vmi, vmi2, vai])
+          #     assert(@blocked_by[vmi2][vai] == vmi, [vmi, vmi2, vai, @blocked_by[vmi2][vai]])
+          #   end
+          # end
         else
           mps[mi0] = mp
         end
@@ -655,17 +676,17 @@ class Solver
   def get_att_bucket(mp, mp2)
     if mp.y <= mp2.y
       min_yb = 0
-      max_yb = ((mp.y + 5) / ATT_BUCKET).floor.to_i
+      max_yb = mp.y + 5 > mp2.y ? @att_rows.size - 1 : ((mp.y + 5) / ATT_BUCKET).floor.to_i
     else
       max_yb = @att_rows.size - 1
-      min_yb = ((mp.y - 5) / ATT_BUCKET).floor.to_i
+      min_yb = mp.y - 5 < mp2.y ? 0 : ((mp.y - 5) / ATT_BUCKET).floor.to_i
     end
     if mp.x <= mp2.x
       min_xb = 0
-      max_xb = ((mp.x + 5) / ATT_BUCKET).floor.to_i
+      max_xb = mp.x + 5 > mp2.x ? @att_cols.size - 1 : ((mp.x + 5) / ATT_BUCKET).floor.to_i
     else
       max_xb = @att_cols.size - 1
-      min_xb = ((mp.x - 5) / ATT_BUCKET).floor.to_i
+      min_xb = mp.x - 5 < mp2.x ? 0 : ((mp.x - 5) / ATT_BUCKET).floor.to_i
     end
     return {min_yb, max_yb, min_xb, max_xb}
   end
