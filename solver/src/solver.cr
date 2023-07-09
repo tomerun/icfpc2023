@@ -218,21 +218,14 @@ class Solver
       Pillar.new(Pos.new(cy, cx), r)
     end
     @blocked_by = Array(Array(Int32)).new(@mn) { Array.new(@an, -1) }
+    # blocker_of[i] = [{j, k}] := musician i is blocking sound of musician j to attendee k
     @blocker_of = Array(Array(Tuple(Int32, Int32))).new(@mn) { [] of Tuple(Int32, Int32) }
     @raw_score = Array(Float64).new(@mn, 0.0)
   end
 
   def solve(timelimit)
-    best_res = RES_EMPTY
-    turn = 0
-    10.times do
-      res = create_initial_solution()
-      if res.score > best_res.score
-        debug("score:#{res.score} at turn:#{turn} #{verify_score(res.ps)}")
-        best_res = res
-      end
-      turn += 1
-    end
+    best_res = create_initial_solution()
+    debug("initial_score:#{best_res.score} #{verify_score(best_res.ps)}")
     STDERR.puts("create_initial_solution:#{Time.utc.to_unix_ms - START_TIME}")
     if @in == 1
       return best_res
@@ -240,7 +233,8 @@ class Solver
 
     change_types = [] of ChangeType
     # 10.times { change_types << ChangeType::MOVE }
-    # 10.times { change_types << ChangeType::JUMP }
+    cnt_cand_pos = (((@stage.right - @stage.left) / 20).floor.to_i + 1) * ((@stage.top - @stage.bottom) / (10 * (3 ** 0.5))).ceil.to_i
+    {(cnt_cand_pos / @mn).ceil.to_i, 10}.min.times { change_types << ChangeType::JUMP }
     if @in != 1
       10.times { change_types << ChangeType::SWAP }
     end
@@ -343,11 +337,132 @@ class Solver
           end
           if score > best_res.score
             best_res = Result.new(mps.dup, score)
-            debug("score:#{score} at turn:#{turn}")
+            debug("score:#{score} at turn:#{turn} #{change_type}")
           end
         end
       when ChangeType::MOVE
       when ChangeType::JUMP
+        mi0 = RND.rand(@mn)
+        ny = RND.rand * (@stage.top - @stage.bottom) + @stage.bottom
+        nx = RND.rand * (@stage.right - @stage.left) + @stage.left
+        ok = false
+        20.times do
+          if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 20 ** 2 }
+            ok = true
+            break
+          end
+          ny = RND.rand * (@stage.top - @stage.bottom) + @stage.bottom
+          nx = RND.rand * (@stage.right - @stage.left) + @stage.left
+        end
+        next if !ok
+        np = Pos.new(ny, nx)
+        mp = mps[mi0]
+        inst = @instruments[mi0]
+        diff = 0.0
+        diff -= @raw_score[mi0] * @quality[mi0]
+        new_q = 1.0
+        new_quality = @quality.dup
+        new_quality[mi0] = 1.0
+        new_raw = @raw_score.dup
+        new_raw[mi0] = 0.0
+        if !@pillars.empty?
+          @inst_mi[inst].each do |mi|
+            next if mi0 == mi
+            v = 1.0 / (dist2(mps[mi], np) ** 0.5)
+            new_quality[mi0] += v
+            v_old = 1.0 / (dist2(mps[mi], mp) ** 0.5)
+            diff += (v - v_old) * @raw_score[mi]
+            new_quality[mi] += v - v_old
+          end
+        end
+        # new_blocked_by = Array.new(@an, EMPTY)
+        # # 新しく置いた位置でのブロック関係
+        # omp = mps[mi0]
+        # mps[mi0] = np
+        # angles = rad_sort(mps, mi0)
+        # others_on = Set(Int32).new
+        # near_mi = nil
+        # near_dist = 1e10
+        # @mn.times do |mi|
+        #   next if i == mi
+        #   my = mps[mi].y - mp.y
+        #   mx = mps[mi].x - mp.x
+        #   if my < 0 && mx.abs < 5
+        #     others_on << mi
+        #     d2 = my ** 2 + mx ** 2
+        #     if d2 < near_dist
+        #       near_dist = d2
+        #       near_mi = mi
+        #     end
+        #   end
+        # end
+        # pillar_on = Set(Int32).new
+        # @pillars.size.times do |pi|
+        #   my = @pillars[pi].pos.y - mp.y
+        #   mx = @pillars[pi].pos.x - mp.x
+        #   if my < 0 && mx.abs < @pillars[pi].r
+        #     pillar_on << pi
+        #     d2 = my ** 2 + mx ** 2
+        #     if d2 < near_dist
+        #       near_dist = d2
+        #     end
+        #   end
+        # end
+
+        # diff += new_raw[mi0] * new_quality[mi0]
+        # mps[mi0] = omp
+
+        # # 動かしたことで届くようになった
+        # @blocker_of[mi0].each do |mi, ai|
+        #   is_blocked = @mn.times.any? { |bmi| bmi != mi0 && bmi != mi && block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0) }
+        #   is_blocked |= block(mps[mi], np, @attendees[ai].pos, 5.0)
+        #   is_blocked |= @pillars.any? { |pl| block(mps[mi], pl.pos, @attendees[ai].pos, pl.r) }
+        #   if !is_blocked
+        #     d2 = dist2(mps[mi], @attendees[ai].pos)
+        #     v = @attendees[ai].taste[@instruments[mi]] / d2
+        #     diff += v * new_quality[mi]
+        #     new_raw[mi] += v
+        #   end
+        # end
+        # # 動かしたことで遮られた
+        # @mn.times do |mi|
+        #   next if mi == mi0
+        #   @an.times do |ai|
+        #     next if @blocked_by[mi][ai] != EMPTY
+        #     if block(mps[mi], np, @attendees[ai].pos, 5.0)
+        #       d2 = dist2(mps[mi], @attendees[ai].pos)
+        #       v = @attendees[ai].taste[@instruments[mi]] / d2
+        #       diff -= v * new_quality[mi]
+        #       new_raw[mi] -= v
+        #     end
+        #   end
+        # end
+
+        # if accept(diff, cooler)
+        #   score += diff
+        #   @quality[mi0] = new_q0
+        #   @raw_score[mi0] = new_raw0
+        #   if !@pillars.empty?
+        #     @inst_mi[i0].each do |mi|
+        #       next if mi == mi0
+        #       v = 1.0 / (dist2(mps[mi], mps[mi0]) ** 0.5)
+        #       v_old = 1.0 / (dist2(mps[mi], mps[mi1]) ** 0.5)
+        #       @quality[mi] += v - v_old
+        #     end
+        #   end
+        #   mps[mi0] = np
+        #   @an.times do |ai|
+        #     bi = @blocked_by[mi0][ai]
+        #     if bi >= 0
+        #       idx = @blocker_of[bi].index({mi1, ai}).not_nil!
+        #       @blocker_of[bi][idx] = {mi0, ai}
+        #     end
+        #   end
+        #   if score > best_res.score
+        #     best_res = Result.new(mps.dup, score)
+        #     debug("score:#{score} at turn:#{turn} #{change_type}")
+        #   end
+        # end
       end
     end
 
@@ -407,102 +522,21 @@ class Solver
     @mn.times do |i|
       mp = mps[i]
       inst = @instruments[i]
-      angles = rad_sort(mps, i)
-      others_on = Set(Int32).new
-      near_mi = nil
-      near_dist = 1e10
-      @mn.times do |mi|
-        next if i == mi
-        my = mps[mi].y - mp.y
-        mx = mps[mi].x - mp.x
-        if my < 0 && mx.abs < 5
-          others_on << mi
-          d2 = my ** 2 + mx ** 2
-          if d2 < near_dist
-            near_dist = d2
-            near_mi = mi
-          end
-        end
-      end
-      pillar_on = Set(Int32).new
-      @pillars.size.times do |pi|
-        my = @pillars[pi].pos.y - mp.y
-        mx = @pillars[pi].pos.x - mp.x
-        if my < 0 && mx.abs < @pillars[pi].r
-          pillar_on << pi
-          d2 = my ** 2 + mx ** 2
-          if d2 < near_dist
-            near_dist = d2
-          end
-        end
-      end
-      angles.each do |ang|
-        case ang[0]
-        when SortType::M
-          mi = ang[1]
-          d2 = dist2(mp, mps[mi])
-          if others_on.includes?(mi)
-            others_on.delete(mi)
-            if others_on.empty?
-              near_mi = nil
-              near_dist = 1e10
-              pillar_on.each do |pi|
-                pd2 = dist2(mp, @pillars[pi].pos)
-                if pd2 < near_dist
-                  near_dist = pd2
-                end
-              end
-            elsif (d2 - near_dist).abs < 1e-9
-              near_dist = 1e10
-              others_on.each do |omi|
-                md = dist2(mp, mps[omi])
-                if md < near_dist
-                  near_dist = md
-                  near_mi = omi
-                end
-              end
-            end
-          else
-            others_on << mi
-            if d2 < near_dist
-              near_dist = d2
-              near_mi = mi
-            end
-          end
-        when SortType::A
-          if near_dist > dist2(mp, @attendees[ang[1]].pos)
-            # if pillar_on.all? { |pi| !block(mp, @pillars[pi].pos, @attendees[ang[1]].pos, @pillars[pi].r) }
-            #   # not blocked
-            #   # debug({i, ang[1], v})
-            # else
-            #   debug("block_by_pillar #{near_dist} #{dist2(mp, @attendees[ang[1]].pos)}")
-            #   @blocked_by[i][ang[1]] = BLOCK_BY_PILLAR
-            # end
-          else
-            if near_mi.nil?
-              @blocked_by[i][ang[1]] = BLOCK_BY_PILLAR
-            else
-              @blocked_by[i][ang[1]] = near_mi
-              @blocker_of[near_mi] << {i, ang[1]}
-            end
-          end
-        when SortType::P
-          d2 = dist2(mp, @pillars[ang[1]].pos)
-          if pillar_on.includes?(ang[1])
-            pillar_on.delete(ang[1])
-            if (d2 - near_dist).abs < 1e-4
-              near_dist = 1e10
-              pillar_on.each do |pi|
-                pd2 = dist2(mp, @pillars[pi].pos)
-                if pd2 < near_dist
-                  near_dist = pd2
-                end
-              end
-            end
-          else
-            pillar_on << ang[1]
-            near_dist = {near_dist, d2}.min
-          end
+      angles = rad_sort(mps, i) do |ai, blocker|
+        if blocker == EMPTY
+          # do nothing
+          # if pillar_on.all? { |pi| !block(mp, @pillars[pi].pos, @attendees[ang[1]].pos, @pillars[pi].r) }
+          #   # not blocked
+          #   # debug({i, ang[1], v})
+          # else
+          #   debug("block_by_pillar #{near_dist} #{dist2(mp, @attendees[ang[1]].pos)}")
+          #   @blocked_by[i][ang[1]] = BLOCK_BY_PILLAR
+          # end
+        elsif blocker == BLOCK_BY_PILLAR
+          @blocked_by[i][ai] = BLOCK_BY_PILLAR
+        else
+          @blocked_by[i][ai] = blocker
+          @blocker_of[blocker] << {i, ai}
         end
       end
     end
@@ -595,7 +629,97 @@ class Solver
     angles += right.sort.map { |v| {v[1], v[2]} }
     angles += up
     angles += left.sort.map { |v| {v[1], v[2]} }
-    return angles
+    others_on = Set(Int32).new
+    near_mi = nil
+    near_dist = 1e10
+    @mn.times do |omi|
+      next if mi == omi
+      my = mps[omi].y - mp.y
+      mx = mps[omi].x - mp.x
+      if my < 0 && mx.abs < 5
+        others_on << omi
+        d2 = my ** 2 + mx ** 2
+        if d2 < near_dist
+          near_dist = d2
+          near_mi = omi
+        end
+      end
+    end
+    pillar_on = Set(Int32).new
+    @pillars.size.times do |pi|
+      my = @pillars[pi].pos.y - mp.y
+      mx = @pillars[pi].pos.x - mp.x
+      if my < 0 && mx.abs < @pillars[pi].r
+        pillar_on << pi
+        d2 = my ** 2 + mx ** 2
+        if d2 < near_dist
+          near_dist = d2
+        end
+      end
+    end
+    angles.each do |ang|
+      case ang[0]
+      when SortType::M
+        cmi = ang[1]
+        d2 = dist2(mp, mps[cmi])
+        if others_on.includes?(cmi)
+          others_on.delete(cmi)
+          if others_on.empty?
+            near_mi = nil
+            near_dist = 1e10
+            pillar_on.each do |pi|
+              pd2 = dist2(mp, @pillars[pi].pos)
+              if pd2 < near_dist
+                near_dist = pd2
+              end
+            end
+          elsif (d2 - near_dist).abs < 1e-9
+            near_dist = 1e10
+            others_on.each do |omi|
+              md = dist2(mp, mps[omi])
+              if md < near_dist
+                near_dist = md
+                near_mi = omi
+              end
+            end
+          end
+        else
+          others_on << cmi
+          if d2 < near_dist
+            near_dist = d2
+            near_mi = cmi
+          end
+        end
+      when SortType::A
+        if near_dist > dist2(mp, @attendees[ang[1]].pos)
+          yield ang[1], EMPTY
+        else
+          if near_mi.nil?
+            yield ang[1], BLOCK_BY_PILLAR
+          else
+            yield ang[1], near_mi
+          end
+        end
+      when SortType::P
+        d2 = dist2(mp, @pillars[ang[1]].pos)
+        if pillar_on.includes?(ang[1])
+          pillar_on.delete(ang[1])
+          if (d2 - near_dist).abs < 1e-4
+            near_dist = 1e10
+            pillar_on.each do |pi|
+              pd2 = dist2(mp, @pillars[pi].pos)
+              if pd2 < near_dist
+                near_dist = pd2
+              end
+            end
+          end
+        else
+          pillar_on << ang[1]
+          near_dist = {near_dist, d2}.min
+        end
+      end
+    end
+    # return angles
   end
 
   def accept(diff, cooler)
