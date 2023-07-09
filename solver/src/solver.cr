@@ -691,10 +691,9 @@ class Solver
     eps = 1e-5
     y = @stage.bottom
     row = ((@stage.top - @stage.bottom) / (10 * (3 ** 0.5) + eps)).ceil.to_i
-    step_y = row == 1 ? 0.0 : (@stage.top - @stage.bottom) / (row - 1)
+    step_y = row == 1 ? 100.0 : (@stage.top - @stage.bottom) / (row - 1)
     x = @stage.left
-    col = ((@stage.right - @stage.left) / 20 + 1e-7).ceil.to_i
-    step_x = col == 1 ? 0.0 : (@stage.right - @stage.left) / (col - 1)
+    step_x = 20.0
     while y <= @stage.top + 1e-8
       if y > @stage.top - step_y
         y = @stage.top
