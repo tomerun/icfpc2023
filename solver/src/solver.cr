@@ -3,8 +3,9 @@ require "json"
 START_TIME      = Time.utc.to_unix_ms
 TL              = (ENV["TL"]? || 2000).to_i
 PART            = (ENV["PART"]? || 1).to_i
-INITIAL_TEMP    = (ENV["IT"]? || 100).to_f * 1e-3
-FINAL_TEMP      = (ENV["FT"]? || 10).to_f * 1e-3
+INITIAL_TEMP    = (ENV["IT"]? || 100).to_f * 1e-5
+FINAL_TEMP      = (ENV["FT"]? || 10).to_f * 1e-5
+MOVE_DIST       = (ENV["MD"]? || 100).to_f * 0.1
 INF             = 1 << 28
 EMPTY           = -1
 BLOCK_BY_PILLAR = -2
@@ -229,13 +230,14 @@ class Solver
     STDERR.puts("create_initial_solution:#{Time.utc.to_unix_ms - START_TIME}")
 
     change_types = [] of ChangeType
-    # 10.times { change_types << ChangeType::MOVE }
     cnt_cand_pos = (((@stage.right - @stage.left) / 20).floor.to_i + 1) * (((@stage.top - @stage.bottom) / (10 * (3 ** 0.5))).floor.to_i + 1)
-    debug("cnt_cand_pos:#{cnt_cand_pos}")
-    {(cnt_cand_pos / @mn).ceil.to_i, 10}.min.times { change_types << ChangeType::JUMP }
+    {(cnt_cand_pos / @mn).ceil.to_i, 10}.min.times { change_types << ChangeType::MOVE }
     if @in != 1
       10.times { change_types << ChangeType::SWAP }
     end
+    initial_jump_prob = {cnt_cand_pos / @mn, 10.0}.min * 0.09
+    jump_prob = initial_jump_prob
+    debug("cnt_cand_pos:#{cnt_cand_pos} initial_jump_prob:#{initial_jump_prob}")
     mps = best_res.ps.dup
     score = best_res.score
     turn = 0
@@ -271,6 +273,7 @@ class Solver
         end
         ratio = (cur_time - begin_time) / total_time
         cooler = Math.exp(Math.log(initial_cooler) * (1.0 - ratio) + Math.log(final_cooler) * ratio)
+        jump_prob = initial_jump_prob * (1.0 - ratio)
       end
       turn += 1
       change_type = change_types[RND.rand(change_types.size)]
@@ -382,20 +385,35 @@ class Solver
           end
         end
       when ChangeType::MOVE
-      when ChangeType::JUMP
         mi0 = RND.rand(@mn)
-        ny = RND.rand * (@stage.top - @stage.bottom) + @stage.bottom
-        nx = RND.rand * (@stage.right - @stage.left) + @stage.left
-        ok = false
-        20.times do
-          if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 20 ** 2 }
-            ok = true
-            break
-          end
+        if RND.rand < jump_prob
+          change_type = ChangeType::JUMP
           ny = RND.rand * (@stage.top - @stage.bottom) + @stage.bottom
           nx = RND.rand * (@stage.right - @stage.left) + @stage.left
+          ok = false
+          20.times do
+            if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 20 ** 2 }
+              ok = true
+              break
+            end
+            ny = RND.rand * (@stage.top - @stage.bottom) + @stage.bottom
+            nx = RND.rand * (@stage.right - @stage.left) + @stage.left
+          end
+          next if !ok
+        else
+          ny = (mps[mi0].y + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.bottom, @stage.top)
+          nx = (mps[mi0].x + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.left, @stage.right)
+          ok = false
+          5.times do
+            if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 20 ** 2 }
+              ok = true
+              break
+            end
+            ny = (mps[mi0].y + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.bottom, @stage.top)
+            nx = (mps[mi0].x + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.left, @stage.right)
+          end
+          next if !ok
         end
-        next if !ok
         np = Pos.new(ny, nx)
         mp = mps[mi0]
         mps[mi0] = np
