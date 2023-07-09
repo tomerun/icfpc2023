@@ -5,7 +5,7 @@ TL              = (ENV["TL"]? || 2000).to_i
 PART            = (ENV["PART"]? || 1).to_i
 INITIAL_TEMP    = (ENV["IT"]? || 100).to_f * 1e-5
 FINAL_TEMP      = (ENV["FT"]? || 10).to_f * 1e-5
-MOVE_DIST       = (ENV["MD"]? || 100).to_f * 0.1
+MOVE_DIST       = (ENV["MD"]? || 500).to_f * 0.1
 INF             = 1 << 28
 EMPTY           = -1
 BLOCK_BY_PILLAR = -2
@@ -126,16 +126,19 @@ end
 class Result
   getter :score, :ps
 
-  def initialize(@ps : Array(Pos), @score : Float64)
+  def initialize(@ps : Array(Pos), @score : Float64, @amp : Array(Bool))
   end
 
   def to_s(io)
-    json = {"placements" => @ps.map { |p| {"x" => p.x, "y" => p.y} }}
+    json = {
+      "placements" => @ps.map { |p| {"x" => p.x, "y" => p.y} },
+      "volumes"    => @amp.map { |am| am ? 10.0 : 0.0 },
+    }
     io << json.to_json << "\n"
   end
 end
 
-RES_EMPTY = Result.new([] of Pos, -1e10)
+RES_EMPTY = Result.new([] of Pos, -1e10, [] of Bool)
 
 def block(ip0, op, ap, r)
   dy = ap.y - ip0.y
@@ -225,8 +228,8 @@ class Solver
   end
 
   def solve(timelimit)
-    best_res = create_initial_solution()
-    debug("initial_score:#{best_res.score} #{verify_score(best_res.ps)}")
+    best_res, score = create_initial_solution()
+    debug("initial_score:#{best_res.score} pure_score:#{score} #{verify_score(best_res.ps)}")
     STDERR.puts("create_initial_solution:#{Time.utc.to_unix_ms - START_TIME}")
 
     change_types = [] of ChangeType
@@ -239,7 +242,6 @@ class Solver
     jump_prob = initial_jump_prob
     debug("cnt_cand_pos:#{cnt_cand_pos} initial_jump_prob:#{initial_jump_prob}")
     mps = best_res.ps.dup
-    score = best_res.score
     turn = 0
     initial_cooler = 1.0 / INITIAL_TEMP
     final_cooler = 1.0 / FINAL_TEMP
@@ -365,9 +367,10 @@ class Solver
               @blocker_of[bi][idx] = {mi1, ai}
             end
           end
-          if score > best_res.score
-            best_res = Result.new(mps.dup, score)
-            debug("score:#{score} at turn:#{turn} #{change_type}")
+          amp_score, amp = amplified_score()
+          if amp_score > best_res.score
+            best_res = Result.new(mps.dup, amp_score, amp)
+            debug("score:#{score} amp_score:#{amp_score} at turn:#{turn} #{change_type}")
           end
           @blocker_of[mi0].each do |t|
             bmi, bai = t
@@ -545,9 +548,10 @@ class Solver
           end
           @blocked_by[mi0] = new_blocked_by
 
-          if score > best_res.score
-            best_res = Result.new(mps.dup, score)
-            debug("score:#{score} at turn:#{turn} #{change_type}")
+          amp_score, amp = amplified_score()
+          if amp_score > best_res.score
+            best_res = Result.new(mps.dup, amp_score, amp)
+            debug("score:#{score} amp_score:#{amp_score} at turn:#{turn} #{change_type}")
           end
         else
           mps[mi0] = mp
@@ -555,7 +559,20 @@ class Solver
       end
     end
 
+    debug(@raw_score)
     return best_res
+  end
+
+  def amplified_score
+    score = 0.0
+    amp = Array.new(@mn, false)
+    @mn.times do |i|
+      amp[i] = @raw_score[i] >= 0
+      if amp[i]
+        score += @raw_score[i] * @quality[i] * 10.0
+      end
+    end
+    return score, amp
   end
 
   def create_initial_solution
@@ -639,7 +656,7 @@ class Solver
         end
       end
     end
-    score = 0.0
+    pure_score = 0.0
     @mn.times do |i|
       @an.times do |j|
         next if @blocked_by[i][j] != EMPTY
@@ -647,11 +664,11 @@ class Solver
         v = @attendees[j].taste[@instruments[i]]
         raw = v / d2
         @raw_score[i] += raw
-        score += raw * @quality[i]
-        # debug([i, j, v / d2 * @quality[i]])
       end
+      pure_score += @raw_score[i] * @quality[i]
     end
-    return Result.new(mps, score)
+    score, amp = amplified_score()
+    return Result.new(mps, score, amp), pure_score
   end
 
   def rad_sort(mps, mi)
