@@ -16,7 +16,7 @@ crystal build --release solver.cr
 for (( i = $SEED_START; i < $SEED_END; i++ )); do
 	seed=$(printf "%04d" $i)
 	echo "seed:$seed"
-	./solver < problem/"$seed".json > result/"$seed".json 2> >(tee -a log.txt >&2)
+	TL=60000 ./solver < problem/"$seed".json > result/"$seed".json 2> >(tee -a log.txt >&2)
 done
 
 aws s3 cp log.txt s3://marathon-tester/$RESULT_PATH/$(printf "%04d" $SEED_START).txt

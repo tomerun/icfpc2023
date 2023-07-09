@@ -1,8 +1,8 @@
 require 'date'
 require 'fileutils'
 
-range = 1
-array_size = 2
+range = 10
+array_size = 9
 contest_id = "ICFPC2023"
 solver_id = DateTime.now.strftime("%d%H%M")
 solver_path = "#{contest_id}/#{solver_id}"
