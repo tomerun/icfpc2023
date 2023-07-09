@@ -711,7 +711,7 @@ class Solver
     cand_pos = [] of Pos
     eps = 1e-5
     y = @stage.bottom
-    row = ((@stage.top - @stage.bottom) / (10 * (3 ** 0.5) + eps)).ceil.to_i
+    row = ((@stage.top - @stage.bottom) / (10 * (3 ** 0.5) + eps)).floor.to_i + 1
     step_y = row == 1 ? 100.0 : (@stage.top - @stage.bottom) / (row - 1)
     x = @stage.left
     step_x = 20.0
