@@ -7,8 +7,9 @@ INITIAL_TEMP    = (ENV["IT"]? || 100).to_f * 1e-5
 FINAL_TEMP      = (ENV["FT"]? || 10).to_f * 1e-5
 MOVE_DIST       = (ENV["MD"]? || 500).to_f * 0.1
 INF             = 1 << 28
-EMPTY           = -1
-BLOCK_BY_PILLAR = -2
+EMPTY           =  -1
+BLOCK_BY_PILLAR =  -2
+ATT_BUCKET      = 100
 COUNTER         = Counter.new
 STOPWATCH       = StopWatch.new
 RND             = Random.new(2)
@@ -225,6 +226,12 @@ class Solver
     # blocker_of[i] = [{j, k}] := musician i is blocking sound of musician j to attendee k
     @blocker_of = Array(Set(Tuple(Int32, Int32))).new(@mn) { Set(Tuple(Int32, Int32)).new }
     @raw_score = Array(Float64).new(@mn, 0.0)
+    @att_rows = Array(Array(Int32)).new((room_h / ATT_BUCKET).floor.to_i + 1) { [] of Int32 }
+    @att_cols = Array(Array(Int32)).new((room_w / ATT_BUCKET).floor.to_i + 1) { [] of Int32 }
+    @an.times do |ai|
+      @att_rows[(@attendees[ai].pos.y / ATT_BUCKET).floor.to_i] << ai
+      @att_cols[(@attendees[ai].pos.x / ATT_BUCKET).floor.to_i] << ai
+    end
   end
 
   def solve(timelimit)
@@ -398,6 +405,7 @@ class Solver
       when ChangeType::MOVE
         COUNTER.add(11)
         mi0 = RND.rand(@mn)
+        STOPWATCH.start("pos")
         if RND.rand < jump_prob
           change_type = ChangeType::JUMP
           ny = RND.rand * (@stage.top - @stage.bottom) + @stage.bottom
@@ -411,7 +419,10 @@ class Solver
             ny = RND.rand * (@stage.top - @stage.bottom) + @stage.bottom
             nx = RND.rand * (@stage.right - @stage.left) + @stage.left
           end
-          next if !ok
+          if !ok
+            STOPWATCH.stop("pos")
+            next
+          end
         else
           ny = (mps[mi0].y + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.bottom, @stage.top)
           nx = (mps[mi0].x + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.left, @stage.right)
@@ -424,8 +435,12 @@ class Solver
             ny = (mps[mi0].y + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.bottom, @stage.top)
             nx = (mps[mi0].x + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.left, @stage.right)
           end
-          next if !ok
+          if !ok
+            STOPWATCH.stop("pos")
+            next
+          end
         end
+        STOPWATCH.stop("pos")
         np = Pos.new(ny, nx)
         mp = mps[mi0]
         mps[mi0] = np
@@ -446,6 +461,7 @@ class Solver
             new_quality[mi] += v - v_old
           end
         end
+        STOPWATCH.start("angle")
         new_blocked_by = Array.new(@an, EMPTY)
         # 新しく置いた位置でのブロック関係
         angles = rad_sort(mps, mi0) do |ai, blocker|
@@ -458,9 +474,11 @@ class Solver
           end
         end
         diff += new_raw[mi0] * new_quality[mi0]
+        STOPWATCH.stop("angle")
 
         # 動かしたことで届くようになった
         # debug("blocker_size:#{@blocker_of[mi0].size}")
+        STOPWATCH.start("new")
         @blocker_of[mi0].each do |mi, ai|
           is_blocked = @mn.times.any? { |bmi| bmi != mi && block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0) }
           is_blocked |= @pillars.any? { |pl| block(mps[mi], pl.pos, @attendees[ai].pos, pl.r) }
@@ -471,19 +489,52 @@ class Solver
             new_raw[mi] += v
           end
         end
+        STOPWATCH.stop("new")
         # 動かしたことで遮られた
+        STOPWATCH.start("shut")
         @mn.times do |mi|
           next if mi == mi0
-          @an.times do |ai|
-            next if @blocked_by[mi][ai] != EMPTY
-            if block(mps[mi], np, @attendees[ai].pos, 5.0)
-              d2 = dist2(mps[mi], @attendees[ai].pos)
-              v = @attendees[ai].taste[@instruments[mi]] / d2
-              diff -= v * new_quality[mi]
-              new_raw[mi] -= v
+          if mp.y <= mps[mi].y
+            min_yb = 0
+            max_yb = ((mp.y + 5) / ATT_BUCKET).floor.to_i
+          else
+            max_yb = @att_rows.size - 1
+            min_yb = ((mp.y - 5) / ATT_BUCKET).floor.to_i
+          end
+          if mp.x <= mps[mi].x
+            min_xb = 0
+            max_xb = ((mp.x + 5) / ATT_BUCKET).floor.to_i
+          else
+            max_xb = @att_cols.size - 1
+            min_xb = ((mp.x - 5) / ATT_BUCKET).floor.to_i
+          end
+          if (max_yb - min_yb + 1) / @att_rows.size < (max_xb - min_xb + 1) / @att_cols.size
+            min_yb.upto(max_yb) do |yb|
+              @att_rows[yb].each do |ai|
+                next if @blocked_by[mi][ai] != EMPTY
+                if block(mps[mi], np, @attendees[ai].pos, 5.0)
+                  d2 = dist2(mps[mi], @attendees[ai].pos)
+                  v = @attendees[ai].taste[@instruments[mi]] / d2
+                  diff -= v * new_quality[mi]
+                  new_raw[mi] -= v
+                end
+              end
+            end
+          else
+            min_xb.upto(max_xb) do |xb|
+              @att_cols[xb].each do |ai|
+                next if @blocked_by[mi][ai] != EMPTY
+                if block(mps[mi], np, @attendees[ai].pos, 5.0)
+                  d2 = dist2(mps[mi], @attendees[ai].pos)
+                  v = @attendees[ai].taste[@instruments[mi]] / d2
+                  diff -= v * new_quality[mi]
+                  new_raw[mi] -= v
+                end
+              end
             end
           end
         end
+        STOPWATCH.stop("shut")
         if accept(diff, cooler)
           COUNTER.add(12)
           score += diff
@@ -492,6 +543,7 @@ class Solver
           @blocker_of[mi0].clear
 
           # 他の人たちへの影響
+          STOPWATCH.start("after")
           @mn.times do |mi|
             next if mi == mi0
             @an.times do |ai|
@@ -543,8 +595,10 @@ class Solver
               end
             end
           end
+          STOPWATCH.stop("after")
 
           # 移動先からの線のブロック
+          STOPWATCH.start("moved")
           @an.times do |ai|
             if @blocked_by[mi0][ai] >= 0
               blockers = @blocker_of[@blocked_by[mi0][ai]]
@@ -556,6 +610,7 @@ class Solver
             end
           end
           @blocked_by[mi0] = new_blocked_by
+          STOPWATCH.stop("moved")
 
           amp_score, amp = amplified_score()
           if amp_score > best_res.score
@@ -889,7 +944,7 @@ def main
   end
   puts best_res
   debug(COUNTER)
-  # debug(STOPWATCH)
+  debug(STOPWATCH)
   STDERR.puts("final_score:#{best_res.score}")
 end
 
