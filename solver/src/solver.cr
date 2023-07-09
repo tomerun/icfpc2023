@@ -289,6 +289,7 @@ class Solver
       case change_type
       when ChangeType::SWAP
         COUNTER.add(1)
+        STOPWATCH.start("swap")
         i0 = RND.rand(@in)
         i1 = RND.rand(@in - 1)
         i1 += 1 if i1 >= i0
@@ -330,8 +331,10 @@ class Solver
         end
         diff += new_raw0 * new_q0
         diff += new_raw1 * new_q1
+        STOPWATCH.stop("swap")
         if accept(diff, cooler)
           COUNTER.add(2)
+          STOPWATCH.start("swap_accept")
           score += diff
           mps.swap(mi0, mi1)
           @quality[mi0] = new_q0
@@ -396,6 +399,7 @@ class Solver
               @blocked_by[bmi][bai] = mi1
             end
           end
+          STOPWATCH.stop("swap_accept")
           amp_score, amp = amplified_score()
           if amp_score > best_res.score
             best_res = Result.new(mps.dup, amp_score, amp)
@@ -478,9 +482,12 @@ class Solver
 
         # 動かしたことで届くようになった
         # debug("blocker_size:#{@blocker_of[mi0].size}")
+        STOPWATCH.start("new_sort")
+        near_mis = (0...@mn).to_a.sort_by { |i| dist2(mps[i], mp) }
+        STOPWATCH.stop("new_sort")
         STOPWATCH.start("new")
         @blocker_of[mi0].each do |mi, ai|
-          is_blocked = @mn.times.any? { |bmi| bmi != mi && block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0) }
+          is_blocked = near_mis.any? { |bmi| bmi != mi && block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0) }
           is_blocked |= @pillars.any? { |pl| block(mps[mi], pl.pos, @attendees[ai].pos, pl.r) }
           if !is_blocked
             d2 = dist2(mps[mi], @attendees[ai].pos)
@@ -494,20 +501,7 @@ class Solver
         STOPWATCH.start("shut")
         @mn.times do |mi|
           next if mi == mi0
-          if mp.y <= mps[mi].y
-            min_yb = 0
-            max_yb = ((mp.y + 5) / ATT_BUCKET).floor.to_i
-          else
-            max_yb = @att_rows.size - 1
-            min_yb = ((mp.y - 5) / ATT_BUCKET).floor.to_i
-          end
-          if mp.x <= mps[mi].x
-            min_xb = 0
-            max_xb = ((mp.x + 5) / ATT_BUCKET).floor.to_i
-          else
-            max_xb = @att_cols.size - 1
-            min_xb = ((mp.x - 5) / ATT_BUCKET).floor.to_i
-          end
+          min_yb, max_yb, min_xb, max_xb = get_att_bucket(mp, mps[mi])
           if (max_yb - min_yb + 1) / @att_rows.size < (max_xb - min_xb + 1) / @att_cols.size
             min_yb.upto(max_yb) do |yb|
               @att_rows[yb].each do |ai|
@@ -540,57 +534,89 @@ class Solver
           score += diff
           @quality = new_quality
           @raw_score = new_raw
-          @blocker_of[mi0].clear
 
           # 他の人たちへの影響
           STOPWATCH.start("after")
+          blocker0 = @blocker_of[mi0].dup
+          @blocker_of[mi0].clear
+          blocker0.each do |t|
+            mi, ai = t
+            assert(@blocked_by[mi][ai] == mi0)
+            min_dist = 1e10
+            block_by = EMPTY
+            @mn.times do |bmi|
+              next if mi == bmi
+              if block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0)
+                d2 = dist2(mps[mi], mps[bmi])
+                if d2 < min_dist
+                  min_dist = d2
+                  block_by = bmi
+                end
+              end
+            end
+            if block_by == EMPTY
+              @pillars.each do |pl|
+                if block(mps[mi], pl.pos, @attendees[ai].pos, pl.r)
+                  d2 = dist2(mps[mi], pl.pos)
+                  if d2 < min_dist
+                    min_dist = d2
+                    block_by = BLOCK_BY_PILLAR
+                    break
+                  end
+                end
+              end
+            end
+            @blocked_by[mi][ai] = block_by
+            if block_by >= 0
+              @blocker_of[block_by] << {mi, ai}
+            end
+          end
+
           @mn.times do |mi|
             next if mi == mi0
-            @an.times do |ai|
-              if @blocked_by[mi][ai] == mi0
-                min_dist = 1e10
-                block_by = EMPTY
-                @mn.times do |bmi|
-                  next if mi == bmi
-                  if block(mps[mi], mps[bmi], @attendees[ai].pos, 5.0)
-                    d2 = dist2(mps[mi], mps[bmi])
-                    if d2 < min_dist
-                      min_dist = d2
-                      block_by = bmi
+            min_yb, max_yb, min_xb, max_xb = get_att_bucket(mp, np)
+            if (max_yb - min_yb + 1) / @att_rows.size < (max_xb - min_xb + 1) / @att_cols.size
+              min_yb.upto(max_yb) do |yb|
+                @att_rows[yb].each do |ai|
+                  if block(mps[mi], np, @attendees[ai].pos, 5.0)
+                    if @blocked_by[mi][ai] == EMPTY
+                      cd2 = 1e10
+                    elsif @blocked_by[mi][ai] == BLOCK_BY_PILLAR
+                      cd2 = 1e10
+                    else
+                      cd2 = dist2(mps[mi], mps[@blocked_by[mi][ai]])
                     end
-                  end
-                end
-                if block_by == EMPTY
-                  @pillars.each do |pl|
-                    if block(mps[mi], pl.pos, @attendees[ai].pos, pl.r)
-                      d2 = dist2(mps[mi], pl.pos)
-                      if d2 < min_dist
-                        min_dist = d2
-                        block_by = BLOCK_BY_PILLAR
-                        break
+                    if dist2(mps[mi], np) < cd2
+                      if @blocked_by[mi][ai] >= 0
+                        assert(@blocker_of[@blocked_by[mi][ai]].includes?({mi, ai}))
+                        @blocker_of[@blocked_by[mi][ai]].delete({mi, ai})
                       end
+                      @blocked_by[mi][ai] = mi0
+                      @blocker_of[mi0] << {mi, ai}
                     end
                   end
                 end
-                @blocked_by[mi][ai] = block_by
-                if block_by >= 0
-                  @blocker_of[block_by] << {mi, ai}
-                end
-              elsif block(mps[mi], np, @attendees[ai].pos, 5.0)
-                if @blocked_by[mi][ai] == EMPTY
-                  cd2 = 1e10
-                elsif @blocked_by[mi][ai] == BLOCK_BY_PILLAR
-                  cd2 = 1e10
-                else
-                  cd2 = dist2(mps[mi], mps[@blocked_by[mi][ai]])
-                end
-                if dist2(mps[mi], np) < cd2
-                  if @blocked_by[mi][ai] >= 0
-                    assert(@blocker_of[@blocked_by[mi][ai]].includes?({mi, ai}))
-                    @blocker_of[@blocked_by[mi][ai]].delete({mi, ai})
+              end
+            else
+              min_xb.upto(max_xb) do |xb|
+                @att_cols[xb].each do |ai|
+                  if block(mps[mi], np, @attendees[ai].pos, 5.0)
+                    if @blocked_by[mi][ai] == EMPTY
+                      cd2 = 1e10
+                    elsif @blocked_by[mi][ai] == BLOCK_BY_PILLAR
+                      cd2 = 1e10
+                    else
+                      cd2 = dist2(mps[mi], mps[@blocked_by[mi][ai]])
+                    end
+                    if dist2(mps[mi], np) < cd2
+                      if @blocked_by[mi][ai] >= 0
+                        assert(@blocker_of[@blocked_by[mi][ai]].includes?({mi, ai}))
+                        @blocker_of[@blocked_by[mi][ai]].delete({mi, ai})
+                      end
+                      @blocked_by[mi][ai] = mi0
+                      @blocker_of[mi0] << {mi, ai}
+                    end
                   end
-                  @blocked_by[mi][ai] = mi0
-                  @blocker_of[mi0] << {mi, ai}
                 end
               end
             end
@@ -623,8 +649,25 @@ class Solver
       end
     end
 
-    debug(@raw_score)
     return best_res
+  end
+
+  def get_att_bucket(mp, mp2)
+    if mp.y <= mp2.y
+      min_yb = 0
+      max_yb = ((mp.y + 5) / ATT_BUCKET).floor.to_i
+    else
+      max_yb = @att_rows.size - 1
+      min_yb = ((mp.y - 5) / ATT_BUCKET).floor.to_i
+    end
+    if mp.x <= mp2.x
+      min_xb = 0
+      max_xb = ((mp.x + 5) / ATT_BUCKET).floor.to_i
+    else
+      max_xb = @att_cols.size - 1
+      min_xb = ((mp.x - 5) / ATT_BUCKET).floor.to_i
+    end
+    return {min_yb, max_yb, min_xb, max_xb}
   end
 
   def amplified_score
