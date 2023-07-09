@@ -583,16 +583,19 @@ class Solver
     cand_pos = [] of Pos
     eps = 1e-5
     y = @stage.bottom
-    step_y = 10 * (3 ** 0.5) + eps
+    row = ((@stage.top - @stage.bottom) / (10 * (3 ** 0.5) + eps)).ceil.to_i
+    step_y = row == 1 ? 0.0 : (@stage.top - @stage.bottom) / (row - 1)
     x = @stage.left
-    while y <= @stage.top
+    col = ((@stage.right - @stage.left) / 20 + 1e-7).ceil.to_i
+    step_x = col == 1 ? 0.0 : (@stage.right - @stage.left) / (col - 1)
+    while y <= @stage.top + 1e-8
       if y > @stage.top - step_y
         y = @stage.top
       end
-      x.step(to: @stage.right, by: 20.0) do |cx|
+      x.step(to: @stage.right, by: step_x) do |cx|
         cand_pos << Pos.new(y, cx)
       end
-      x += x == @stage.left ? 5 : -5
+      x = x == @stage.left ? @stage.left + step_x * 0.5 : @stage.left
       y += step_y
     end
     pos_i = cand_pos.size.times.to_a
