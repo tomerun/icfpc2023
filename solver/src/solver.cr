@@ -225,19 +225,17 @@ class Solver
   def solve(timelimit)
     best_res = RES_EMPTY
     turn = 0
-    while true
-      if Time.utc.to_unix_ms > timelimit
-        debug("total_turn:#{turn}")
-        break
-      end
+    10.times do
       res = create_initial_solution()
-      STDERR.puts("create_initial_solution:#{Time.utc.to_unix_ms - START_TIME}")
       if res.score > best_res.score
         debug("score:#{res.score} at turn:#{turn} #{verify_score(res.ps)}")
         best_res = res
       end
       turn += 1
-      break
+    end
+    STDERR.puts("create_initial_solution:#{Time.utc.to_unix_ms - START_TIME}")
+    if @in == 1
+      return best_res
     end
 
     change_types = [] of ChangeType
@@ -353,7 +351,6 @@ class Solver
       end
     end
 
-    debug([best_res.score, verify_score(best_res.ps)])
     return best_res
   end
 
@@ -643,6 +640,7 @@ def main
   best_res = RES_EMPTY
   PART.times do |i|
     res = solver.solve(START_TIME + TL * (i + 1) // PART)
+    debug([res.score, solver.verify_score(res.ps)])
     if res.score > best_res.score
       best_res = res
     end
