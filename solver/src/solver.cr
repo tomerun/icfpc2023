@@ -45,10 +45,12 @@ class Counter
   end
 
   def add(i)
-    while @hist.size <= i
-      @hist << 0
-    end
-    @hist[i] += 1
+    {% if flag?(:local) %}
+      while @hist.size <= i
+        @hist << 0
+      end
+      @hist[i] += 1
+    {% end %}
   end
 
   def to_s(io)
@@ -240,10 +242,10 @@ class Solver
     STDERR.puts("create_initial_solution:#{Time.utc.to_unix_ms - START_TIME}")
 
     change_types = [] of ChangeType
-    cnt_cand_pos = (((@stage.right - @stage.left) / 20).floor.to_i + 1) * (((@stage.top - @stage.bottom) / (10 * (3 ** 0.5))).floor.to_i + 1)
+    cnt_cand_pos = (((@stage.right - @stage.left) / 10).floor.to_i + 1) * (((@stage.top - @stage.bottom) / (5 * (3 ** 0.5))).floor.to_i + 1)
     {(cnt_cand_pos / @mn).ceil.to_i, 10}.min.times { change_types << ChangeType::MOVE }
     if @in != 1
-      10.times { change_types << ChangeType::SWAP }
+      100.times { change_types << ChangeType::SWAP }
     end
     initial_jump_prob = {cnt_cand_pos / @mn, 10.0}.min * 0.09
     jump_prob = initial_jump_prob
@@ -283,6 +285,9 @@ class Solver
         ratio = (cur_time - begin_time) / total_time
         cooler = Math.exp(Math.log(initial_cooler) * (1.0 - ratio) + Math.log(final_cooler) * ratio)
         jump_prob = initial_jump_prob * (1.0 - ratio)
+        if timelimit - cur_time < TL / 40
+          change_types = [ChangeType::MOVE]
+        end
       end
       turn += 1
       change_type = change_types[RND.rand(change_types.size)]
@@ -333,7 +338,7 @@ class Solver
         diff += new_raw1 * new_q1
         STOPWATCH.stop("swap")
         if accept(diff, cooler)
-          COUNTER.add(2)
+          COUNTER.add(diff.abs < 1e-8 ? 3 : 2)
           STOPWATCH.start("swap_accept")
           score += diff
           mps.swap(mi0, mi1)
@@ -532,7 +537,7 @@ class Solver
         end
         STOPWATCH.stop("shut")
         if accept(diff, cooler)
-          COUNTER.add(12)
+          COUNTER.add(diff.abs < 1e-8 ? 13 : 12)
           score += diff
           @quality = new_quality
           @raw_score = new_raw
@@ -961,10 +966,11 @@ class Solver
   end
 
   def accept(diff, cooler)
-    return true if diff >= 0
-    v = diff * cooler
-    return false if v < -8
-    return RND.rand < Math.exp(v)
+    return true if diff > 0
+    return false
+    # v = diff * cooler
+    # return false if v < -8
+    # return RND.rand < Math.exp(v)
   end
 
   def verify_score(mps)
