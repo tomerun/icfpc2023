@@ -127,7 +127,7 @@ enum ChangeType
 end
 
 class Result
-  getter :score, :ps
+  property :score, :ps
 
   def initialize(@ps : Array(Pos), @score : Float64, @amp : Array(Bool))
   end
@@ -230,14 +230,18 @@ class Solver
     @raw_score = Array(Float64).new(@mn, 0.0)
     @att_rows = Array(Array(Int32)).new((room_h / ATT_BUCKET).floor.to_i + 1) { [] of Int32 }
     @att_cols = Array(Array(Int32)).new((room_w / ATT_BUCKET).floor.to_i + 1) { [] of Int32 }
+    @orig_taste = [] of Array(Float64)
     @an.times do |ai|
       @att_rows[(@attendees[ai].pos.y / ATT_BUCKET).floor.to_i] << ai
       @att_cols[(@attendees[ai].pos.x / ATT_BUCKET).floor.to_i] << ai
+      @orig_taste << @attendees[ai].taste.dup
+      @attendees[ai].taste.map! { |v| {v, 0.0}.max }
     end
   end
 
   def solve(timelimit)
     best_res, score = create_initial_solution()
+    best_res.score = 0.0
     debug("initial_score:#{best_res.score} pure_score:#{score} #{verify_score(best_res.ps)}")
     STDERR.puts("create_initial_solution:#{Time.utc.to_unix_ms - START_TIME}")
 
@@ -257,6 +261,7 @@ class Solver
     cooler = initial_cooler
     begin_time = Time.utc.to_unix_ms
     total_time = timelimit - begin_time
+    nega_ratio = 0.0
     while true
       # debug("score:#{score} verify_score:#{verify_score(mps)}")
       # @mn.times do |vmi|
@@ -288,6 +293,27 @@ class Solver
         if timelimit - cur_time < TL / 40
           change_types = [ChangeType::MOVE]
         end
+        nega_ratio = ratio > 0.9 ? 1.0 : ratio / 0.9
+        @an.times do |ai|
+          @in.times do |ii|
+            v = @orig_taste[ai][ii]
+            @attendees[ai].taste[ii] = v >= 0 ? v : v * nega_ratio
+          end
+        end
+        @raw_score.fill(0.0)
+        score = 0.0
+        @mn.times do |mi|
+          @an.times do |ai|
+            if @blocked_by[mi][ai] == EMPTY
+              d2 = dist2(mps[mi], @attendees[ai].pos)
+              v = @attendees[ai].taste[@instruments[mi]]
+              raw = v / d2
+              score += raw * @quality[mi]
+              @raw_score[mi] += raw
+            end
+          end
+        end
+        # debug("score:#{score} verify_score:#{verify_score(mps)}")
       end
       turn += 1
       change_type = change_types[RND.rand(change_types.size)]
@@ -407,7 +433,7 @@ class Solver
           end
           STOPWATCH.stop("swap_accept")
           amp_score, amp = amplified_score()
-          if amp_score > best_res.score
+          if amp_score > best_res.score && nega_ratio == 1.0
             best_res = Result.new(mps.dup, amp_score, amp)
             debug("score:#{score} amp_score:#{amp_score} at turn:#{turn} #{change_type}")
           end
@@ -647,7 +673,7 @@ class Solver
           STOPWATCH.stop("moved")
 
           amp_score, amp = amplified_score()
-          if amp_score > best_res.score
+          if amp_score > best_res.score && nega_ratio == 1.0
             best_res = Result.new(mps.dup, amp_score, amp)
             debug("score:#{score} amp_score:#{amp_score} at turn:#{turn} #{change_type}")
           end
@@ -966,11 +992,11 @@ class Solver
   end
 
   def accept(diff, cooler)
-    return true if diff > 0
-    return false
-    # v = diff * cooler
-    # return false if v < -8
-    # return RND.rand < Math.exp(v)
+    return true if diff >= 0
+    # return false
+    v = diff * cooler
+    return false if v < -8
+    return RND.rand < Math.exp(v)
   end
 
   def verify_score(mps)
