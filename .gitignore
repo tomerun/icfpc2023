@@ -1,4 +1,4 @@
-.shards/
+ .shards/
 bin/
 doc/
 docs/
@@ -6,6 +6,7 @@ lib/
 output/
 problem/
 answer/
+result/
 *.dwarf
 *.png
 *.zip
