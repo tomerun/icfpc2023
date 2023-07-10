@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title></title>
+	<meta charset="utf-8">
+	<style type="text/css">
+		#canvas {
+			border: 1px solid gray;
+		}
+		#frame, #step, #zoom {
+			width: 100px;
+		}
+		#input, #output {
+			width: 250px;
+		}
+		.container {
+			display: flex;
+		}
+		.container div {
+			margin: 10px;
+		}
+	</style>
+	<script type="text/javascript" src="vis.js" defer></script>
+</head>
+<body>
+	<div class="container">
+		<div>
+			<p>input:</p>
+			<p><textarea id="input" rows="3"></textarea></p>
+			<p>output:</p>
+			<p><textarea id="output" rows="3"></textarea></p>
+			<p><button id="update">update</button> <button id="recolor">recolor</button></p>
+		</div>
+		<div>
+			<canvas id="canvas" width="1000" height="1000"></canvas>
+		</div>
+	</div>
+</body>
+</html>
