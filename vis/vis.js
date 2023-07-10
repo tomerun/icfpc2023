@@ -4,6 +4,7 @@ const output = document.getElementById("output")
 const update = document.getElementById("update")
 const recolor = document.getElementById("recolor")
 const canvas = document.getElementById("canvas")
+const taste = document.getElementById("taste")
 
 class Point {
 	constructor(y, x) {
@@ -67,13 +68,14 @@ class Visualizer {
 			const col_r = Math.round(Math.random() * 150 + 50)
 			const col_g = Math.round(Math.random() * 150 + 50)
 			const col_b = Math.round(Math.random() * 150 + 50)
-			this.colorPalete.push(`rgb(${col_r}, ${col_g}, ${col_b})`)
+			this.colorPalete.push([col_r, col_g, col_b])
 		}
 	}
 
 	update() {
 		this.input = new Input(JSON.parse(input.value))
 		this.output = new Output(JSON.parse(output.value))
+		taste.max = this.input.attendees[0].tastes.length - 1
 		this.show()
 	}
 
@@ -92,7 +94,6 @@ class Visualizer {
 		} else {
 			ctx.translate((this.input.room_h - this.input.room_w) / 2, 0)
 		}
-		console.log([zoom])
 		ctx.fillStyle = "#EEE"
 		ctx.fillRect(0, 0, this.input.room_w, this.input.room_h)
 		ctx.fillStyle = "white"
@@ -107,13 +108,22 @@ class Visualizer {
 			ctx.fill()
 		})
 
-		ctx.fillStyle = "blue"
+		const tastes = this.input.attendees.map(a => {return a.tastes[taste.value]})
+		const min_taste = Math.min(...tastes)
+		const max_taste = Math.max(...tastes)
+		const limit = Math.max(Math.abs(max_taste), Math.abs(min_taste))
+		const rgb = this.colorPalete[taste.value]
+		console.log([min_taste, max_taste])
 		this.input.attendees.forEach((att) => {
+			const t = att.tastes[taste.value]
+			const ratio = (t - min_taste) / (max_taste - min_taste)
+			ctx.fillStyle = `rgb(${rgb[0] * ratio}, ${rgb[1] * ratio}, ${rgb[2] * ratio})`
 			ctx.fillRect(att.x - psize, att.y - psize, psize * 2, psize * 2)
 		}) 
 
 		for (var i = 0; i < n; i++) {
-			ctx.fillStyle = this.colorPalete[this.input.instruments[i]]
+			const rgb = this.colorPalete[this.input.instruments[i]]
+			ctx.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`
 			const p = this.output.ps[i]
 			ctx.beginPath()
 			ctx.arc(p.x, p.y, psize, 0, 2 * Math.PI)
@@ -128,6 +138,7 @@ const visualizer = new Visualizer()
 
 output.oninput = (event) => visualizer.update()
 update.onclick = (event) => visualizer.update()
+taste.onchange = (event) => visualizer.update()
 recolor.onclick = (event) => {
 	visualizer.recolor()
 	visualizer.show()
