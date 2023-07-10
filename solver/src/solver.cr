@@ -417,7 +417,7 @@ class Solver
           nx = RND.rand * (@stage.right - @stage.left) + @stage.left
           ok = false
           10.times do
-            if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 20 ** 2 }
+            if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 10 ** 2 }
               ok = true
               break
             end
@@ -433,7 +433,7 @@ class Solver
           nx = (mps[mi0].x + RND.rand * MOVE_DIST - MOVE_DIST * 0.5).clamp(@stage.left, @stage.right)
           ok = false
           10.times do
-            if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 20 ** 2 }
+            if @mn.times.all? { |mi| mi0 == mi || dist2(ny, nx, mps[mi].y, mps[mi].x) > 10 ** 2 }
               ok = true
               break
             end
@@ -713,10 +713,10 @@ class Solver
     cand_pos = [] of Pos
     eps = 1e-5
     y = @stage.bottom
-    row = ((@stage.top - @stage.bottom) / (10 * (3 ** 0.5) + eps)).floor.to_i + 1
+    row = ((@stage.top - @stage.bottom) / (5 * (3 ** 0.5) + eps)).floor.to_i + 1
     step_y = row == 1 ? 100.0 : (@stage.top - @stage.bottom) / (row - 1)
     x = @stage.left
-    step_x = 20.0
+    step_x = 10.0
     while y <= @stage.top + 1e-8
       if y > @stage.top - step_y
         y = @stage.top
